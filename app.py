@@ -49,13 +49,16 @@ st.markdown("""
 def load_data_from_gsheet():
     """
     Загружает данные из Google Sheets
-    Сначала пробует загрузить из секретов (Streamlit Cloud),
-    затем из локального файла (для разработки)
     """
     try:
-        # Пытаемся загрузить credentials из Streamlit Secrets (для облака)
+        # Определяем права доступа - используем правильные scopes
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets.readonly",  # Только чтение
+            "https://www.googleapis.com/auth/drive.readonly"  # Только чтение
+        ]
+
+        # Пытаемся загрузить из секретов Streamlit Cloud
         try:
-            # Проверяем, есть ли секреты
             if "gcp" in st.secrets:
                 creds_info = {
                     "type": st.secrets["gcp"]["type"],
@@ -70,55 +73,50 @@ def load_data_from_gsheet():
                     "client_x509_cert_url": st.secrets["gcp"]["client_x509_cert_url"]
                 }
 
-                # Получаем URL таблицы из секретов
-                if "gsheet" in st.secrets and "url" in st.secrets["gsheet"]:
-                    sheet_url = st.secrets["gsheet"]["url"]
-                else:
-                    # Если нет URL в секретах, используем ID из кода
-                    SHEET_ID = "11hjMbvXri7tRfD_201wQwtnzV54S7xBFTxAGmJEtasM"
-
-                # Авторизуемся
-                creds = Credentials.from_service_account_info(creds_info)
+                creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
                 client = gspread.authorize(creds)
 
-                # Открываем таблицу
-                if 'sheet_url' in locals():
-                    # Извлекаем ID из URL
-                    match = re.search(r'/d/([a-zA-Z0-9-_]+)', sheet_url)
-                    if match:
-                        sheet_id = match.group(1)
-                    else:
-                        sheet_id = sheet_url
-                else:
-                    sheet_id = SHEET_ID
+                # ID таблицы
+                SHEET_ID = "11hjMbvXri7tRfD_201wQwtnzV54S7xBFTxAGmJEtasM"
 
-                sheet = client.open_by_key(sheet_id)
+                sheet = client.open_by_key(SHEET_ID)
                 worksheet = sheet.get_worksheet(0)
 
-                # Получаем данные
                 data = worksheet.get_all_records()
                 df = pd.DataFrame(data)
 
                 # Обработка координат
                 if 'latitude' in df.columns:
-                    df['latitude'] = df['latitude'].astype(str).str.strip()
-                    df['latitude'] = df['latitude'].str.replace(',', '.')
                     df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
-
                 if 'longitude' in df.columns:
-                    df['longitude'] = df['longitude'].astype(str).str.strip()
-                    df['longitude'] = df['longitude'].str.replace(',', '.')
                     df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
 
                 return df
-            else:
-                # Если нет секретов, пробуем загрузить из локального файла
-                return load_from_local_file()
-
         except Exception as e:
-            # Если ошибка с секретами, пробуем локальный файл
-            st.warning(f"Не удалось загрузить из секретов, пробуем локальный файл: {e}")
-            return load_from_local_file()
+            st.warning(f"Не удалось загрузить из секретов: {e}")
+
+        # Если не получилось с секретами, пробуем локальный файл
+        cred_path = Path(".streamlit/google-credentials.json")
+        if cred_path.exists():
+            creds = Credentials.from_service_account_file(str(cred_path), scopes=scopes)
+            client = gspread.authorize(creds)
+
+            SHEET_ID = "11hjMbvXri7tRfD_201wQwtnzV54S7xBFTxAGmJEtasM"
+            sheet = client.open_by_key(SHEET_ID)
+            worksheet = sheet.get_worksheet(0)
+
+            data = worksheet.get_all_records()
+            df = pd.DataFrame(data)
+
+            if 'latitude' in df.columns:
+                df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
+            if 'longitude' in df.columns:
+                df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
+
+            return df
+        else:
+            st.error("❌ Файл .streamlit/google-credentials.json не найден!")
+            return create_demo_data()
 
     except Exception as e:
         st.error(f"❌ Ошибка загрузки данных: {e}")
