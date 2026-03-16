@@ -49,7 +49,84 @@ st.markdown("""
 def load_data_from_gsheet():
     """
     Загружает данные из Google Sheets
+    Сначала пробует загрузить из секретов (Streamlit Cloud),
+    затем из локального файла (для разработки)
     """
+    try:
+        # Пытаемся загрузить credentials из Streamlit Secrets (для облака)
+        try:
+            # Проверяем, есть ли секреты
+            if "gcp" in st.secrets:
+                creds_info = {
+                    "type": st.secrets["gcp"]["type"],
+                    "project_id": st.secrets["gcp"]["project_id"],
+                    "private_key_id": st.secrets["gcp"]["private_key_id"],
+                    "private_key": st.secrets["gcp"]["private_key"],
+                    "client_email": st.secrets["gcp"]["client_email"],
+                    "client_id": st.secrets["gcp"]["client_id"],
+                    "auth_uri": st.secrets["gcp"]["auth_uri"],
+                    "token_uri": st.secrets["gcp"]["token_uri"],
+                    "auth_provider_x509_cert_url": st.secrets["gcp"]["auth_provider_x509_cert_url"],
+                    "client_x509_cert_url": st.secrets["gcp"]["client_x509_cert_url"]
+                }
+
+                # Получаем URL таблицы из секретов
+                if "gsheet" in st.secrets and "url" in st.secrets["gsheet"]:
+                    sheet_url = st.secrets["gsheet"]["url"]
+                else:
+                    # Если нет URL в секретах, используем ID из кода
+                    SHEET_ID = "11hjMbvXri7tRfD_201wQwtnzV54S7xBFTxAGmJEtasM"
+
+                # Авторизуемся
+                creds = Credentials.from_service_account_info(creds_info)
+                client = gspread.authorize(creds)
+
+                # Открываем таблицу
+                if 'sheet_url' in locals():
+                    # Извлекаем ID из URL
+                    match = re.search(r'/d/([a-zA-Z0-9-_]+)', sheet_url)
+                    if match:
+                        sheet_id = match.group(1)
+                    else:
+                        sheet_id = sheet_url
+                else:
+                    sheet_id = SHEET_ID
+
+                sheet = client.open_by_key(sheet_id)
+                worksheet = sheet.get_worksheet(0)
+
+                # Получаем данные
+                data = worksheet.get_all_records()
+                df = pd.DataFrame(data)
+
+                # Обработка координат
+                if 'latitude' in df.columns:
+                    df['latitude'] = df['latitude'].astype(str).str.strip()
+                    df['latitude'] = df['latitude'].str.replace(',', '.')
+                    df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
+
+                if 'longitude' in df.columns:
+                    df['longitude'] = df['longitude'].astype(str).str.strip()
+                    df['longitude'] = df['longitude'].str.replace(',', '.')
+                    df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
+
+                return df
+            else:
+                # Если нет секретов, пробуем загрузить из локального файла
+                return load_from_local_file()
+
+        except Exception as e:
+            # Если ошибка с секретами, пробуем локальный файл
+            st.warning(f"Не удалось загрузить из секретов, пробуем локальный файл: {e}")
+            return load_from_local_file()
+
+    except Exception as e:
+        st.error(f"❌ Ошибка загрузки данных: {e}")
+        return create_demo_data()
+
+
+def load_from_local_file():
+    """Загружает данные из локального файла (для разработки)"""
     try:
         # Путь к файлу с ключами
         cred_path = Path(".streamlit/google-credentials.json")
@@ -99,7 +176,7 @@ def load_data_from_gsheet():
         return df
 
     except Exception as e:
-        st.error(f"❌ Ошибка загрузки данных: {e}")
+        st.error(f"❌ Ошибка загрузки из локального файла: {e}")
         return create_demo_data()
 
 
