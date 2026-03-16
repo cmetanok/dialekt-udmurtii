@@ -6,8 +6,8 @@ ENV/
 
 # Файлы с секретами
 .streamlit/secrets.toml
-.streamlit/*.json
-*.json
+#.streamlit/*.json
+#*.json
 credentials.json
 
 # PyCharm
