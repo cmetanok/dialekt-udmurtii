@@ -4,11 +4,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 import folium
 from streamlit_folium import st_folium
-import plotly.express as px
 from datetime import datetime
 from pathlib import Path
-import re
-import time
 import numpy as np
 from scipy.spatial import ConvexHull
 
@@ -77,7 +74,6 @@ class IsoglossManager:
         try:
             hull = ConvexHull(points_array)
             hull_points = points_array[hull.vertices].tolist()
-            # Замыкаем полигон (добавляем первую точку в конец)
             hull_points.append(hull_points[0])
             return hull_points
         except:
@@ -116,7 +112,7 @@ class IsoglossManager:
                     weight=2,
                     fill=True,
                     fill_color=color,
-                    fill_opacity=0.15,
+                    fill_opacity=0.2,
                     dash_array='5, 5'
                 ).add_to(m)
 
@@ -125,7 +121,7 @@ class IsoglossManager:
                     locations=hull_points,
                     color=color,
                     weight=3,
-                    opacity=0.8,
+                    opacity=0.9,
                     dash_array='5, 5'
                 ).add_to(m)
 
@@ -354,7 +350,7 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles='OpenStreetMap')
 
-    # Добавляем изоглоссы
+    # Добавляем изоглоссы (если включены и выбран вопрос)
     if show_isoglosses and selected_question and selected_question != "Все вопросы":
         iso_manager = IsoglossManager()
         m = iso_manager.add_isoglosses_to_map(m, df, selected_question)
@@ -500,7 +496,7 @@ with st.sidebar:
     st.markdown("---")
 
     # Поиск по населенному пункту
-    search_settlement = st.text_input("🔎 Найти населенный пункт")
+    search_settlement = st.text_input("🔎 Найти населенный пункт", placeholder="например: Русская Лоза")
 
     st.markdown("---")
 
@@ -525,7 +521,7 @@ with st.sidebar:
     # Выбор вопроса
     st.markdown("## 📋 Анализ по вопросам")
     questions = ['Все вопросы'] + get_unique_questions(df)
-    selected_question = st.selectbox("Выберите вопрос", questions)
+    selected_question = st.selectbox("Выберите вопрос из программы ДАРЯ", questions)
 
     selected_answer = "Все ответы"
     if selected_question and selected_question != "Все вопросы":
@@ -535,7 +531,7 @@ with st.sidebar:
     st.markdown("---")
 
     # Показ изоглосс
-    st.session_state['show_isoglosses'] = st.checkbox("🗺️ Показывать изоглоссы (ареалы)",
+    st.session_state['show_isoglosses'] = st.checkbox("🗺️ Показывать изоглоссы (ареалы распространения)",
                                                       value=st.session_state['show_isoglosses'])
 
     st.markdown("---")
@@ -548,33 +544,82 @@ with st.sidebar:
 
     # Статистика
     st.markdown("## 📊 Статистика")
-    st.metric("Населенных пунктов", len(df))
-    if 'district' in df.columns:
-        st.metric("Районов", df['district'].nunique())
-    if 'region' in df.columns:
-        st.metric("Регионов", df['region'].nunique())
-    st.metric("Вопросов", len(get_unique_questions(df)))
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Населенных пунктов", len(df))
+        st.metric("Районов", df['district'].nunique() if 'district' in df.columns else 0)
+    with col2:
+        st.metric("Регионов", df['region'].nunique() if 'region' in df.columns else 0)
+        st.metric("Вопросов", len(get_unique_questions(df)))
 
     st.markdown("---")
 
-    # Инструкция
-    with st.expander("📖 Инструкция пользователя"):
+    # ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ
+    with st.expander("📖 ПОЛНАЯ ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ", expanded=False):
         st.markdown("""
-        **🗺️ Работа с картой:**
-        - Кликните на маркер - увидите все данные по пункту
-        - Выберите вопрос - маркеры раскрасятся по ответам
-        - Включите изоглоссы - увидете границы ареалов
+        ### 🗺️ РАБОТА С КАРТОЙ
 
-        **🔍 Поиск:**
-        - По населенному пункту - введите название
-        - По диалектной особенности - введите слово или выберите из списка
+        **Основные действия:**
+        - **Кликните на любой маркер** - откроется окно со всей информацией о населенном пункте: все диалектные особенности, район, регион
+        - **Приближайте/отдаляйте карту** - используйте колесико мыши или кнопки +/- на карте
+        - **Перетаскивайте карту** - зажмите левую кнопку мыши и двигайте
 
-        **✏️ Режим редактора:**
-        - Добавляйте новые населенные пункты
-        - Координаты определяются автоматически
+        ### 🔍 ПОИСК И ФИЛЬТРАЦИЯ
 
-        **📊 Экспорт:**
-        - Скачайте отфильтрованные данные в CSV
+        **Поиск по населенному пункту:**
+        - Введите название деревни, села или города в поле "Найти населенный пункт"
+        - Результаты отобразятся на карте и в таблице
+
+        **Поиск по диалектным особенностям:**
+        - Введите ключевое слово: "взрывной", "фрикативный", "твердое", "мягкое" и т.д.
+        - Или выберите из выпадающего списка всех доступных вариантов
+        - Карта покажет только те пункты, где есть выбранная особенность
+
+        **Анализ по вопросам ДАРЯ:**
+        - Выберите интересующий вас вопрос из программы ДАРЯ/ЛАРНГ
+        - Маркеры на карте раскрасятся в соответствии с ответами
+        - Включите **"Показывать изоглоссы"** - увидете границы распространения каждого ответа
+
+        ### 🗺️ ИЗОГЛОССЫ (АРЕАЛЫ)
+
+        Что это такое? Изоглоссы - это линии на карте, показывающие границы распространения определенных языковых явлений.
+
+        **Как использовать:**
+        1. Выберите любой вопрос из списка
+        2. Включите чекбокс "Показывать изоглоссы"
+        3. На карте появятся цветные области - ареалы распространения разных вариантов ответов
+        4. Каждый цвет соответствует определенному варианту ответа
+
+        ### ✏️ РЕЖИМ РЕДАКТИРОВАНИЯ
+
+        **Как добавить новый населенный пункт:**
+        1. Нажмите кнопку "✏️ Редактор" в боковой панели
+        2. Перейдите на вкладку "➕ Добавить пункт"
+        3. Заполните поля: регион, район, название, тип пункта
+        4. Нажмите "🔍 Найти координаты" - они определятся автоматически
+        5. Нажмите "✅ Добавить населенный пункт"
+
+        **Как обновить координаты:**
+        - Если у каких-то пунктов нет координат, перейдите на вкладку "🔄 Обновить координаты"
+        - Система автоматически найдет координаты из базы данных
+
+        ### 📊 ТАБЛИЦА ДАННЫХ
+
+        Под картой находится таблица со всеми данными:
+        - Показывает отфильтрованные результаты
+        - Можно скопировать данные из таблицы
+        - Нажмите "📥 Экспорт в CSV" - скачайте данные в формате Excel
+
+        ### 🔄 ОБНОВЛЕНИЕ ДАННЫХ
+
+        - Данные автоматически обновляются каждые 60 секунд
+        - Для ручного обновления нажмите кнопку "🔄 Обновить данные"
+
+        ### 📝 ПРИМЕЧАНИЯ
+
+        - Данные хранятся в Google Sheets и могут редактироваться удаленно
+        - При изменении таблицы, данные на карте обновятся автоматически
+        - Для добавления новых вопросов нужно изменить структуру Google Таблицы
         """)
 
 # -------------------------------
@@ -626,53 +671,50 @@ else:
             st.session_state['show_isoglosses']
         )
 
-        st_folium(map_obj, width=800, height=500)
+        st_folium(map_obj, width=800, height=550)
 
         points_with_coords = filtered_df.dropna(subset=['latitude', 'longitude'])
-        st.info(f"📍 Показано пунктов: {len(points_with_coords)} из {len(filtered_df)}")
+        st.info(
+            f"📍 Показано населенных пунктов на карте: **{len(points_with_coords)}** из **{len(filtered_df)}** отфильтрованных")
 
         if selected_question and selected_question != "Все вопросы" and st.session_state['show_isoglosses']:
-            st.caption("🗺️ Цветные области на карте - ареалы распространения (изоглоссы)")
+            st.caption(
+                "🗺️ **Цветные области на карте - это ареалы распространения (изоглоссы)**. Каждый цвет соответствует одному из вариантов ответа.")
 
     with col2:
         st.markdown("## 📋 Легенда")
 
         if selected_question and selected_question != "Все вопросы":
-            st.markdown(f"**Цвета для вопроса:** *{selected_question}*")
+            st.markdown(f"**Цвета маркеров для вопроса:**")
+            st.markdown(f"*{selected_question}*")
+            st.markdown("---")
             answers = get_answers_for_question(df, selected_question)
             for answer in answers:
                 color = get_color_for_answer(selected_question, answer)
-                st.markdown(f"<span style='color: {color};'>●</span> {answer}", unsafe_allow_html=True)
+                st.markdown(f"<span style='color: {color}; font-size: 20px;'>●</span> {answer}", unsafe_allow_html=True)
 
             if st.session_state['show_isoglosses']:
                 st.markdown("---")
                 st.markdown("**🗺️ Изоглоссы (ареалы):**")
-                st.markdown("Цветные области показывают границы распространения")
-                st.caption("Пунктирные линии - границы ареалов")
+                st.markdown("Цветные области на карте показывают границы распространения")
+                st.caption("Пунктирные линии - это границы ареалов")
         else:
             st.markdown("""
             **Цвета маркеров по умолчанию:**
-            - 🔴 Красный - взрывной [г]
-            - 🟢 Зеленый - фрикативный [ɣ]
-            - 🟠 Оранжевый - твердое [ца]
-            - 🟣 Фиолетовый - мягкое [ц'а]
-            - 🔵 Синий - стандартный
+
+            | Цвет | Значение |
+            |------|----------|
+            | 🔴 Красный | взрывной [г] |
+            | 🟢 Зеленый | фрикативный [ɣ] |
+            | 🟠 Оранжевый | твердое [ца] |
+            | 🟣 Фиолетовый | мягкое [ц'а] |
+            | 🔵 Синий | стандартные окончания |
+
+            *Цвета меняются при выборе конкретного вопроса*
             """)
 
-        if not filtered_df.empty and 'district' in filtered_df.columns:
-            st.markdown("---")
-            st.markdown("## 📊 Распределение по районам")
-            district_counts = filtered_df['district'].value_counts().head(8)
-            fig = px.bar(
-                x=district_counts.values,
-                y=district_counts.index,
-                orientation='h',
-                labels={'x': 'Количество пунктов', 'y': ''},
-                color=district_counts.values,
-                color_continuous_scale='Blues'
-            )
-            fig.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0))
-            st.plotly_chart(fig, use_container_width=True)
+        st.markdown("---")
+        st.markdown("💡 **Совет:** Выберите вопрос из списка, чтобы увидеть изоглоссы!")
 
 # -------------------------------
 # 12. ТАБЛИЦА С ДАННЫМИ
@@ -680,13 +722,15 @@ else:
 st.markdown("---")
 st.markdown("## 📋 Данные населенных пунктов")
 
+# Выбираем колонки для отображения
 display_cols = ['region', 'district', 'settlement']
 if 'settlement_type' in df.columns:
     display_cols.append('settlement_type')
 if 'latitude' in df.columns and 'longitude' in df.columns:
     display_cols.extend(['latitude', 'longitude'])
 
-for i in range(1, 6):
+# Добавляем вопросы и ответы
+for i in range(1, 10):  # до 10 вопросов
     q_col = f'question_{i}'
     a_col = f'answer_{i}'
     if q_col in filtered_df.columns and a_col in filtered_df.columns:
@@ -695,14 +739,14 @@ for i in range(1, 6):
 st.dataframe(
     filtered_df[display_cols],
     width='stretch',
-    height=300,
+    height=350,
     hide_index=True
 )
 
 # -------------------------------
 # 13. КНОПКИ ЭКСПОРТА
 # -------------------------------
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
     if st.button("📥 Экспорт в CSV", use_container_width=True):
         csv = filtered_df.to_csv(index=False, encoding='utf-8-sig')
@@ -725,9 +769,12 @@ st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center; color: gray; font-size: small;'>
-        Данные загружены из Google Sheets • Обновление каждые 60 секунд<br>
-        🗺️ Изоглоссы показывают границы распространения диалектных явлений<br>
-        🔍 Поиск по лингвистическим единицам работает по всем ответам в таблице
+        <b>📊 Источник данных:</b> Google Sheets (программа ДАРЯ/ЛАРНГ)<br>
+        <b>🔄 Автообновление:</b> данные обновляются каждые 60 секунд<br>
+        <b>🗺️ Изоглоссы:</b> показывают границы распространения диалектных явлений<br>
+        <b>🔍 Поиск по лемме:</b> работает по всем диалектным особенностям в таблице<br>
+        <b>📝 Редактирование:</b> данные можно редактировать в Google Sheets и через интерфейс приложения<br><br>
+        © Диалектологическая карта Удмуртии | Проект выполнен в рамках изучения русских говоров
     </div>
     """,
     unsafe_allow_html=True
