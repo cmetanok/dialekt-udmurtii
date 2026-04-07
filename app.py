@@ -662,7 +662,7 @@ else:
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        st.markdown("## 🗺️ Интерактивная карта")
+        st.markdown("## Интерактивная карта")
 
         map_obj = create_map(
             filtered_df,
@@ -695,7 +695,7 @@ else:
 
             if st.session_state['show_isoglosses']:
                 st.markdown("---")
-                st.markdown("**🗺️ Изоглоссы (ареалы):**")
+                st.markdown("**Изоглоссы (ареалы):**")
                 st.markdown("Цветные области на карте показывают границы распространения")
                 st.caption("Пунктирные линии - это границы ареалов")
         else:
@@ -720,7 +720,7 @@ else:
 # 12. ТАБЛИЦА С ДАННЫМИ
 # -------------------------------
 st.markdown("---")
-st.markdown("## 📋 Данные населенных пунктов")
+st.markdown("## Данные населенных пунктов")
 
 # Выбираем колонки для отображения
 display_cols = ['region', 'district', 'settlement']
@@ -748,17 +748,17 @@ st.dataframe(
 # -------------------------------
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
-    if st.button("📥 Экспорт в CSV", use_container_width=True):
+    if st.button("Экспорт в CSV", use_container_width=True):
         csv = filtered_df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
-            "💾 Скачать CSV",
+            "Скачать CSV",
             csv,
             f"dialekt_udmurtii_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             "text/csv"
         )
 
 with col2:
-    if st.button("🔄 Обновить данные", use_container_width=True):
+    if st.button(" Обновить данные", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -773,8 +773,8 @@ st.markdown(
         <b>🔄 Автообновление:</b> данные обновляются каждые 60 секунд<br>
         <b>🗺️ Изоглоссы:</b> показывают границы распространения диалектных явлений<br>
         <b>🔍 Поиск по лемме:</b> работает по всем диалектным особенностям в таблице<br>
-        <b>📝 Редактирование:</b> данные можно редактировать в Google Sheets и через интерфейс приложения<br><br>
-        © Диалектологическая карта Удмуртии | Проект выполнен в рамках изучения русских говоров
+        <b>📝 Редактирование:</b> данные можно редактировать в Google Sheets<br><br>
+        © Диалектологическая карта Удмуртии 2026 | Проект выполнен в рамках изучения русских говоров
     </div>
     """,
     unsafe_allow_html=True
