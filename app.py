@@ -9,6 +9,9 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial import ConvexHull
 
+# Импорт из geocoder.py
+from geocoder import LocationGeocoder, DARYA_QUESTIONS, QUESTION_TO_NUMBER
+
 # -------------------------------
 # 1. НАСТРОЙКА СТРАНИЦЫ
 # -------------------------------
@@ -27,6 +30,14 @@ if 'new_lon' not in st.session_state:
     st.session_state['new_lon'] = 53.0
 if 'show_isoglosses' not in st.session_state:
     st.session_state['show_isoglosses'] = True
+if 'show_templates' not in st.session_state:
+    st.session_state['show_templates'] = False
+if 'selected_question_num' not in st.session_state:
+    st.session_state['selected_question_num'] = None
+if 'selected_question_text' not in st.session_state:
+    st.session_state['selected_question_text'] = None
+if 'template_question' not in st.session_state:
+    st.session_state['template_question'] = None
 
 # Заголовок
 st.markdown("""
@@ -103,7 +114,6 @@ class IsoglossManager:
             if hull_points and len(hull_points) >= 3:
                 color = colors[i % len(colors)]
 
-                # Добавляем полигон (ареал)
                 folium.Polygon(
                     locations=hull_points,
                     popup=f"Ареал: {answer}",
@@ -116,7 +126,6 @@ class IsoglossManager:
                     dash_array='5, 5'
                 ).add_to(m)
 
-                # Добавляем границу (изоглоссу)
                 folium.PolyLine(
                     locations=hull_points,
                     color=color,
@@ -129,61 +138,62 @@ class IsoglossManager:
 
 
 # -------------------------------
-# 3. КЛАСС ДЛЯ ГЕОКОДИРОВАНИЯ
+# 3. ФУНКЦИИ ДЛЯ РАБОТЫ С ВОПРОСАМИ
 # -------------------------------
-class LocationGeocoder:
-    def __init__(self):
-        """Инициализация геокодера с локальной базой данных"""
+def get_unique_questions(df):
+    """Получает список всех вопросов из таблицы с номерами ДАРЯ"""
+    questions = set()
+    for col in df.columns:
+        if col.startswith('question_'):
+            for q in df[col].dropna().unique():
+                if q in QUESTION_TO_NUMBER:
+                    questions.add(f"[№{QUESTION_TO_NUMBER[q]}] {q}")
+                else:
+                    questions.add(q)
+    return sorted(list(questions))
 
-        self.coordinates_db = {
-            'ижевск': (56.8528, 53.2115),
-            'воткинск': (57.0517, 53.9933),
-            'сарапул': (56.4768, 53.7978),
-            'глазов': (58.1359, 52.6635),
-            'можга': (56.4428, 52.2278),
-            'завьялово': (56.7892, 53.3736),
-            'игра': (57.5528, 53.0544),
-            'ува': (56.9808, 52.1851),
-            'русская лоза': (56.8165, 53.3895),
-            'зура': (57.5269, 53.0247),
-            'чур': (57.1267, 53.3881),
-            'бобино': (58.5589, 50.3395),
-            'шестаково': (58.9522, 50.2456),
-            'фоки': (56.6939, 54.1131),
-            'танайка': (55.7891, 52.0345),
-            'янаул': (56.2658, 54.9347),
-        }
 
-        self.timeout_count = 0
-        self.success_count = 0
+def get_original_question(display_question):
+    """Извлекает оригинальный вопрос из отображаемого с номером"""
+    if display_question.startswith("[№"):
+        return display_question.split("] ", 1)[1]
+    return display_question
 
-    def normalize_name(self, name):
-        if pd.isna(name) or name is None:
-            return ""
-        name = str(name).lower().strip()
-        prefixes = ['д. ', 'с. ', 'п. ', 'г. ', 'дер. ', 'село ', 'деревня ']
-        for prefix in prefixes:
-            if name.startswith(prefix):
-                name = name[len(prefix):].strip()
-        return name
 
-    def get_coordinates(self, settlement, district="", region=""):
-        try:
-            settlement_norm = self.normalize_name(settlement)
+def show_question_templates():
+    """Показывает интерфейс для выбора шаблонов вопросов из ДАРЯ"""
+    st.markdown("### 📋 Шаблоны вопросов из ДАРЯ")
+    st.info("Выберите вопрос из списка, чтобы автоматически вставить его в поля ниже")
 
-            if settlement_norm in self.coordinates_db:
-                self.success_count += 1
-                return self.coordinates_db[settlement_norm]
+    # Поиск по вопросам
+    search_q = st.text_input("🔍 Поиск вопроса", placeholder="например: произношение, лексика, синтаксис...")
 
-            for key, coords in self.coordinates_db.items():
-                if settlement_norm and (settlement_norm in key or key in settlement_norm):
-                    self.success_count += 1
-                    return coords
+    # Фильтруем вопросы
+    filtered_questions = DARYA_QUESTIONS.items()
+    if search_q:
+        filtered_questions = [(num, q) for num, q in filtered_questions
+                              if search_q.lower() in q.lower()]
 
-            self.timeout_count += 1
-            return None, None
-        except Exception as e:
-            return None, None
+    # Отображаем вопросы в виде карточек
+    cols = st.columns(3)
+    for i, (num, question) in enumerate(filtered_questions):
+        with cols[i % 3]:
+            if st.button(f"📌 №{num}: {question[:40]}...", key=f"q_{num}"):
+                st.session_state['selected_question_num'] = num
+                st.session_state['selected_question_text'] = question
+                st.success(f"✅ Выбран вопрос: №{num} - {question}")
+
+    # Показываем выбранный вопрос
+    if st.session_state.get('selected_question_text'):
+        st.markdown("---")
+        st.markdown(
+            f"**Выбранный вопрос:** №{st.session_state['selected_question_num']} - {st.session_state['selected_question_text']}")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📝 Вставить в следующее поле вопроса", use_container_width=True):
+                st.session_state['template_question'] = st.session_state['selected_question_text']
+                st.rerun()
 
 
 # -------------------------------
@@ -265,14 +275,6 @@ def create_demo_data():
 # -------------------------------
 # 5. ФУНКЦИИ ДЛЯ РАБОТЫ С ДАННЫМИ
 # -------------------------------
-def get_unique_questions(df):
-    questions = set()
-    for col in df.columns:
-        if col.startswith('question_'):
-            questions.update(df[col].dropna().unique())
-    return sorted(list(questions))
-
-
 def get_answers_for_question(df, question):
     answers = set()
     for q_col in [c for c in df.columns if c.startswith('question_')]:
@@ -300,7 +302,6 @@ def filter_by_question(df, question, answer=None):
 
 
 def search_by_linguistic_unit(df, search_term):
-    """Поиск населенных пунктов по лингвистическим единицам (ответам)"""
     if not search_term:
         return df
 
@@ -316,7 +317,6 @@ def search_by_linguistic_unit(df, search_term):
 
 
 def get_unique_linguistic_units(df):
-    """Получает список всех уникальных лингвистических единиц (ответов)"""
     units = set()
     for col in df.columns:
         if col.startswith('answer_'):
@@ -350,12 +350,10 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles='OpenStreetMap')
 
-    # Добавляем изоглоссы (если включены и выбран вопрос)
     if show_isoglosses and selected_question and selected_question != "Все вопросы":
         iso_manager = IsoglossManager()
         m = iso_manager.add_isoglosses_to_map(m, df, selected_question)
 
-    # Добавляем маркеры
     for idx, row in df.iterrows():
         if pd.notna(row['latitude']) and pd.notna(row['longitude']):
             color = 'blue'
@@ -417,6 +415,14 @@ def show_editor_interface(df):
     with tab1:
         st.markdown("### Добавление нового населенного пункта")
 
+        # Кнопка для показа шаблонов вопросов
+        if st.button("📋 Показать шаблоны вопросов ДАРЯ"):
+            st.session_state['show_templates'] = not st.session_state.get('show_templates', False)
+
+        if st.session_state.get('show_templates', False):
+            show_question_templates()
+            st.markdown("---")
+
         col1, col2 = st.columns(2)
 
         with col1:
@@ -430,17 +436,83 @@ def show_editor_interface(df):
 
             if st.button("🔍 Найти координаты", type="primary"):
                 if new_settlement:
-                    lat, lon = geocoder.get_coordinates(new_settlement, new_district, new_region)
-                    if lat and lon:
-                        st.session_state['new_lat'] = lat
-                        st.session_state['new_lon'] = lon
-                        st.success(f"✅ Найдено: {lat:.6f}, {lon:.6f}")
-                    else:
-                        st.error("❌ Не найдено в базе данных")
+                    with st.spinner("Поиск координат..."):
+                        result, wiki_info = geocoder.get_coordinates(new_settlement, new_district, new_region)
+
+                        if result:
+                            lat, lon = result
+                            st.session_state['new_lat'] = lat
+                            st.session_state['new_lon'] = lon
+                            st.success(f"✅ Найдено: {lat:.6f}, {lon:.6f}")
+
+                            # Показываем карту
+                            m = folium.Map(location=[lat, lon], zoom_start=12)
+                            folium.Marker([lat, lon], popup=new_settlement).add_to(m)
+                            st_folium(m, width=400, height=300)
+                        else:
+                            st.error("❌ Не найдено в базе данных")
+
+                            if wiki_info:
+                                st.markdown("---")
+                                st.markdown("### 🔍 Не удалось найти координаты автоматически")
+                                st.markdown(f"""
+                                **Попробуйте найти координаты в Википедии:**
+
+                                1. Перейдите по ссылке: [{wiki_info['query']}]({wiki_info['page_url']})
+                                2. Или воспользуйтесь поиском: [{wiki_info['query']} - поиск]({wiki_info['search_url']})
+
+                                **Как найти координаты на странице Википедии:**
+                                - Координаты обычно находятся в правом верхнем углу статьи
+                                - Или в информационной таблице справа
+                                - Координаты выглядят как: **56°51′22″ с.ш. 53°12′41″ в.д.**
+                                - Для перевода в десятичные градусы используйте онлайн-конвертер
+                                """)
+
+                                if "тарасово" in new_settlement.lower():
+                                    st.markdown(f"""
+                                    **📌 Пример для {new_settlement}:**
+                                    - Википедия: [Тарасово (Сарапульский район)](https://ru.wikipedia.org/wiki/Тарасово_(Сарапульский_район))
+                                    """)
+
+            st.markdown("#### Или введите координаты вручную:")
+            st.caption("💡 Формат: десятичные градусы (например: 56.8563, 53.2115)")
 
             new_lat = st.number_input("Широта", value=st.session_state.get('new_lat', 57.0), format="%.6f", step=0.0001)
             new_lon = st.number_input("Долгота", value=st.session_state.get('new_lon', 53.0), format="%.6f",
                                       step=0.0001)
+
+        st.markdown("#### 📝 Диалектные особенности")
+
+        # Используем шаблон вопроса, если он есть
+        default_question = st.session_state.get('template_question', '')
+
+        num_questions = st.number_input("Количество вопросов", min_value=1, max_value=10, value=3)
+
+        questions_data = {}
+        question_options = list(DARYA_QUESTIONS.values())
+
+        for i in range(int(num_questions)):
+            col_q, col_a = st.columns(2)
+            with col_q:
+                # Выбор вопроса с автодополнением
+                q_index = 0
+                if default_question and default_question in question_options:
+                    q_index = question_options.index(default_question) + 1
+                q = st.selectbox(
+                    f"Вопрос {i + 1}",
+                    [""] + question_options,
+                    index=q_index,
+                    key=f"new_q_{i}"
+                )
+            with col_a:
+                a = st.text_input(f"Ответ {i + 1}", key=f"new_a_{i}")
+            if q and a:
+                questions_data[f"question_{i + 1}"] = q
+                questions_data[f"answer_{i + 1}"] = a
+
+        # Очищаем шаблон после использования
+        if st.session_state.get('template_question'):
+            del st.session_state['template_question']
 
         if st.button("✅ Добавить населенный пункт", use_container_width=True):
             if new_region and new_district and new_settlement:
@@ -452,6 +524,7 @@ def show_editor_interface(df):
                     "type": new_type,
                     "latitude": new_lat,
                     "longitude": new_lon,
+                    **questions_data
                 })
             else:
                 st.error("❌ Заполните обязательные поля (*)")
@@ -463,6 +536,12 @@ def show_editor_interface(df):
             if len(missing_coords) > 0:
                 st.warning(f"⚠️ Найдено {len(missing_coords)} пунктов без координат")
                 st.dataframe(missing_coords[['region', 'district', 'settlement']])
+
+                if st.button("🔄 Найти координаты для всех", type="primary"):
+                    with st.spinner("Поиск координат..."):
+                        updated_df = geocoder.batch_geocode(df.copy())
+                        st.success("✅ Координаты обновлены!")
+                        st.rerun()
             else:
                 st.success("✅ Все пункты имеют координаты!")
 
@@ -518,10 +597,16 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Выбор вопроса
+    # Выбор вопроса (с номерами)
     st.markdown("## 📋 Анализ по вопросам")
-    questions = ['Все вопросы'] + get_unique_questions(df)
-    selected_question = st.selectbox("Выберите вопрос из программы ДАРЯ", questions)
+    questions_display = get_unique_questions(df)
+    selected_question_display = st.selectbox("Выберите вопрос из программы ДАРЯ", ["Все вопросы"] + questions_display)
+
+    # Извлекаем оригинальный вопрос для фильтрации
+    if selected_question_display == "Все вопросы":
+        selected_question = "Все вопросы"
+    else:
+        selected_question = get_original_question(selected_question_display)
 
     selected_answer = "Все ответы"
     if selected_question and selected_question != "Все вопросы":
@@ -560,66 +645,44 @@ with st.sidebar:
         ### 🗺️ РАБОТА С КАРТОЙ
 
         **Основные действия:**
-        - **Кликните на любой маркер** - откроется окно со всей информацией о населенном пункте: все диалектные особенности, район, регион
-        - **Приближайте/отдаляйте карту** - используйте колесико мыши или кнопки +/- на карте
-        - **Перетаскивайте карту** - зажмите левую кнопку мыши и двигайте
+        - **Кликните на любой маркер** - откроется окно со всей информацией
+        - **Приближайте/отдаляйте карту** - используйте колесико мыши или кнопки +/-
+        - **Перетаскивайте карту** - зажмите левую кнопку мыши
 
         ### 🔍 ПОИСК И ФИЛЬТРАЦИЯ
 
         **Поиск по населенному пункту:**
-        - Введите название деревни, села или города в поле "Найти населенный пункт"
-        - Результаты отобразятся на карте и в таблице
+        - Введите название в поле "Найти населенный пункт"
 
         **Поиск по диалектным особенностям:**
-        - Введите ключевое слово: "взрывной", "фрикативный", "твердое", "мягкое" и т.д.
-        - Или выберите из выпадающего списка всех доступных вариантов
-        - Карта покажет только те пункты, где есть выбранная особенность
+        - Введите ключевое слово или выберите из списка
 
         **Анализ по вопросам ДАРЯ:**
-        - Выберите интересующий вас вопрос из программы ДАРЯ/ЛАРНГ
-        - Маркеры на карте раскрасятся в соответствии с ответами
-        - Включите **"Показывать изоглоссы"** - увидете границы распространения каждого ответа
-
-        ### 🗺️ ИЗОГЛОССЫ (АРЕАЛЫ)
-
-        Что это такое? Изоглоссы - это линии на карте, показывающие границы распространения определенных языковых явлений.
-
-        **Как использовать:**
-        1. Выберите любой вопрос из списка
-        2. Включите чекбокс "Показывать изоглоссы"
-        3. На карте появятся цветные области - ареалы распространения разных вариантов ответов
-        4. Каждый цвет соответствует определенному варианту ответа
+        - Выберите вопрос (отображаются с номерами из ДАРЯ)
+        - Включите "Показывать изоглоссы" для отображения ареалов
 
         ### ✏️ РЕЖИМ РЕДАКТИРОВАНИЯ
 
-        **Как добавить новый населенный пункт:**
-        1. Нажмите кнопку "✏️ Редактор" в боковой панели
-        2. Перейдите на вкладку "➕ Добавить пункт"
-        3. Заполните поля: регион, район, название, тип пункта
-        4. Нажмите "🔍 Найти координаты" - они определятся автоматически
-        5. Нажмите "✅ Добавить населенный пункт"
+        **Добавление пункта:**
+        1. Нажмите "✏️ Редактор"
+        2. Заполните поля: регион, район, название
+        3. Нажмите "🔍 Найти координаты"
+        4. Выберите вопросы из шаблонов ДАРЯ
+        5. Нажмите "✅ Добавить"
 
-        **Как обновить координаты:**
-        - Если у каких-то пунктов нет координат, перейдите на вкладку "🔄 Обновить координаты"
-        - Система автоматически найдет координаты из базы данных
+        **Если координаты не найдены:**
+        - Перейдите по ссылке на Википедию
+        - Найдите координаты на странице
+        - Введите их вручную
 
-        ### 📊 ТАБЛИЦА ДАННЫХ
+        ### 🗺️ ИЗОГЛОССЫ (АРЕАЛЫ)
 
-        Под картой находится таблица со всеми данными:
-        - Показывает отфильтрованные результаты
-        - Можно скопировать данные из таблицы
-        - Нажмите "📥 Экспорт в CSV" - скачайте данные в формате Excel
+        Что это такое? Изоглоссы - это линии на карте, показывающие границы распространения языковых явлений.
 
-        ### 🔄 ОБНОВЛЕНИЕ ДАННЫХ
-
-        - Данные автоматически обновляются каждые 60 секунд
-        - Для ручного обновления нажмите кнопку "🔄 Обновить данные"
-
-        ### 📝 ПРИМЕЧАНИЯ
-
-        - Данные хранятся в Google Sheets и могут редактироваться удаленно
-        - При изменении таблицы, данные на карте обновятся автоматически
-        - Для добавления новых вопросов нужно изменить структуру Google Таблицы
+        **Как использовать:**
+        1. Выберите вопрос из списка
+        2. Включите чекбокс "Показывать изоглоссы"
+        3. На карте появятся цветные области - ареалы распространения
         """)
 
 # -------------------------------
@@ -662,7 +725,7 @@ else:
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        st.markdown("## Интерактивная карта")
+        st.markdown("## 🗺️ Интерактивная карта")
 
         map_obj = create_map(
             filtered_df,
@@ -677,16 +740,16 @@ else:
         st.info(
             f"📍 Показано населенных пунктов на карте: **{len(points_with_coords)}** из **{len(filtered_df)}** отфильтрованных")
 
-        if selected_question and selected_question != "Все вопросы" and st.session_state['show_isoglosses']:
-            st.caption(
-                "🗺️ **Цветные области на карте - это ареалы распространения (изоглоссы)**. Каждый цвет соответствует одному из вариантов ответа.")
-
     with col2:
         st.markdown("## 📋 Легенда")
 
         if selected_question and selected_question != "Все вопросы":
-            st.markdown(f"**Цвета маркеров для вопроса:**")
-            st.markdown(f"*{selected_question}*")
+            # Находим номер вопроса
+            q_number = QUESTION_TO_NUMBER.get(selected_question, "")
+            if q_number:
+                st.markdown(f"**Вопрос №{q_number}:** *{selected_question}*")
+            else:
+                st.markdown(f"**Вопрос:** *{selected_question}*")
             st.markdown("---")
             answers = get_answers_for_question(df, selected_question)
             for answer in answers:
@@ -695,9 +758,8 @@ else:
 
             if st.session_state['show_isoglosses']:
                 st.markdown("---")
-                st.markdown("**Изоглоссы (ареалы):**")
-                st.markdown("Цветные области на карте показывают границы распространения")
-                st.caption("Пунктирные линии - это границы ареалов")
+                st.markdown("**🗺️ Изоглоссы (ареалы):**")
+                st.markdown("Цветные области показывают границы распространения")
         else:
             st.markdown("""
             **Цвета маркеров по умолчанию:**
@@ -709,28 +771,21 @@ else:
             | 🟠 Оранжевый | твердое [ца] |
             | 🟣 Фиолетовый | мягкое [ц'а] |
             | 🔵 Синий | стандартные окончания |
-
-            *Цвета меняются при выборе конкретного вопроса*
             """)
-
-        st.markdown("---")
-
 
 # -------------------------------
 # 12. ТАБЛИЦА С ДАННЫМИ
 # -------------------------------
 st.markdown("---")
-st.markdown("## Данные населенных пунктов")
+st.markdown("## 📋 Данные населенных пунктов")
 
-# Выбираем колонки для отображения
 display_cols = ['region', 'district', 'settlement']
 if 'settlement_type' in df.columns:
     display_cols.append('settlement_type')
 if 'latitude' in df.columns and 'longitude' in df.columns:
     display_cols.extend(['latitude', 'longitude'])
 
-# Добавляем вопросы и ответы
-for i in range(1, 10):  # до 10 вопросов
+for i in range(1, 10):
     q_col = f'question_{i}'
     a_col = f'answer_{i}'
     if q_col in filtered_df.columns and a_col in filtered_df.columns:
@@ -748,17 +803,17 @@ st.dataframe(
 # -------------------------------
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
-    if st.button("Экспорт в CSV", use_container_width=True):
+    if st.button("📥 Экспорт в CSV", use_container_width=True):
         csv = filtered_df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
-            "Скачать CSV",
+            "💾 Скачать CSV",
             csv,
             f"dialekt_udmurtii_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             "text/csv"
         )
 
 with col2:
-    if st.button(" Обновить данные", use_container_width=True):
+    if st.button("🔄 Обновить данные", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -772,9 +827,11 @@ st.markdown(
         <b>📊 Источник данных:</b> Google Sheets (программа ДАРЯ/ЛАРНГ)<br>
         <b>🔄 Автообновление:</b> данные обновляются каждые 60 секунд<br>
         <b>🗺️ Изоглоссы:</b> показывают границы распространения диалектных явлений<br>
-        <b>🔍 Поиск по лемме:</b> работает по всем диалектным особенностям в таблице<br>
-        <b>📝 Редактирование:</b> данные можно редактировать в Google Sheets<br><br>
-        © Диалектологическая карта Удмуртии 2026 | Проект выполнен в рамках изучения русских говоров
+        <b>🔍 Поиск по лемме:</b> работает по всем диалектным особенностям<br>
+        <b>📝 Номера вопросов:</b> соответствуют программе ДАРЯ<br>
+        <b>🌐 Википедия:</b> ссылки для поиска координат при отсутствии в базе<br>
+        <hr>
+        © Диалектологическая карта Удмуртии | Проект выполнен в рамках изучения русских говоров
     </div>
     """,
     unsafe_allow_html=True
