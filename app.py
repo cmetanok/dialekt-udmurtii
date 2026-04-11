@@ -586,50 +586,62 @@ def show_editor_interface(df):
                             st.info(
                                 "Скопируйте координаты из Википедии (например: 56°51′22″ с.ш. 53°12′41″ в.д.) и вставьте в поля ниже")
 
-                            col_dms1, col_dms2 = st.columns(2)
+                            # Используем отдельные переменные для конвертера, не связанные с session_state
+                            converter_col1, converter_col2 = st.columns(2)
 
-                            with col_dms1:
-                                dms_lat = st.text_input("Широта (градусы)", placeholder="56°51′22″ с.ш.", key="dms_lat")
+                            with converter_col1:
+                                dms_lat_input = st.text_input(
+                                    "Широта (градусы)",
+                                    placeholder="56°51′22″ с.ш.",
+                                    key="dms_lat_converter"
+                                )
 
-                            with col_dms2:
-                                dms_lon = st.text_input("Долгота (градусы)", placeholder="53°12′41″ в.д.",
-                                                        key="dms_lon")
+                            with converter_col2:
+                                dms_lon_input = st.text_input(
+                                    "Долгота (градусы)",
+                                    placeholder="53°12′41″ в.д.",
+                                    key="dms_lon_converter"
+                                )
 
-                            if st.button("🔄 Конвертировать координаты", key="convert_btn"):
-                                converted_lat = convert_dms_to_decimal(dms_lat)
-                                converted_lon = convert_dms_to_decimal(dms_lon)
+                            # Кнопка конвертации без rerun
+                            if st.button("🔄 Конвертировать координаты", key="convert_coords_btn"):
+                                converted_lat = convert_dms_to_decimal(dms_lat_input)
+                                converted_lon = convert_dms_to_decimal(dms_lon_input)
 
                                 if converted_lat is not None and converted_lon is not None:
-                                    st.session_state['new_lat'] = converted_lat
-                                    st.session_state['new_lon'] = converted_lon
+                                    # Показываем результат и предлагаем применить
                                     st.success(
                                         f"✅ Сконвертировано: Широта = {converted_lat}, Долгота = {converted_lon}")
 
-                                    m = folium.Map(location=[converted_lat, converted_lon], zoom_start=12)
-                                    folium.Marker([converted_lat, converted_lon], popup=new_settlement).add_to(m)
-                                    st_folium(m, width=400, height=300)
+                                    # Кнопка для применения сконвертированных координат
+                                    if st.button("📌 Применить эти координаты", key="apply_converted"):
+                                        st.session_state['new_lat'] = converted_lat
+                                        st.session_state['new_lon'] = converted_lon
+                                        st.success("✅ Координаты применены! Можете продолжить заполнение формы.")
+                                        st.rerun()
                                 else:
                                     if converted_lat is None:
-                                        st.error("❌ Не удалось распознать широту")
+                                        st.error("❌ Не удалось распознать широту. Пример: 56°51′22″ с.ш.")
                                     if converted_lon is None:
-                                        st.error("❌ Не удалось распознать долготу")
+                                        st.error("❌ Не удалось распознать долготу. Пример: 53°12′41″ в.д.")
 
-                            st.markdown("**📋 Примеры для быстрой вставки:**")
-                            cols_ex = st.columns(3)
-                            with cols_ex[0]:
-                                if st.button("📌 Ижевск"):
-                                    st.session_state['dms_lat'] = "56°51′00″ с.ш."
-                                    st.session_state['dms_lon'] = "53°12′00″ в.д."
-                                    st.rerun()
-                            with cols_ex[1]:
-                                if st.button("📌 Воткинск"):
-                                    st.session_state['dms_lat'] = "57°03′00″ с.ш."
-                                    st.session_state['dms_lon'] = "53°59′00″ в.д."
-                                    st.rerun()
-                            with cols_ex[2]:
-                                if st.button("📌 Глазов"):
-                                    st.session_state['dms_lat'] = "58°08′00″ с.ш."
-                                    st.session_state['dms_lon'] = "52°40′00″ в.д."
+                            # Примеры для быстрой вставки (без автоматического rerun)
+                            st.markdown("**📋 Примеры для копирования:**")
+
+                            # Создаем примеры в виде текста для копирования
+                            examples_data = {
+                                "📍 Ижевск": ("56°51′00″ с.ш.", "53°12′00″ в.д."),
+                                "📍 Воткинск": ("57°03′00″ с.ш.", "53°59′00″ в.д."),
+                                "📍 Глазов": ("58°08′00″ с.ш.", "52°40′00″ в.д."),
+                                "📍 Сарапул": ("56°28′00″ с.ш.", "53°48′00″ в.д."),
+                                "📍 Можга": ("56°26′00″ с.ш.", "52°13′00″ в.д."),
+                            }
+
+                            # Отображаем примеры в виде кнопок копирования
+                            for place_name, (lat_ex, lon_ex) in examples_data.items():
+                                if st.button(f"📋 {place_name}", key=f"example_{place_name}"):
+                                    st.session_state['dms_lat_converter'] = lat_ex
+                                    st.session_state['dms_lon_converter'] = lon_ex
                                     st.rerun()
 
         st.markdown("#### Или введите координаты вручную:")
