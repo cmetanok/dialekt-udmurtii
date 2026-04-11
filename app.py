@@ -532,18 +532,18 @@ def show_editor_interface(df):
 
     geocoder = LocationGeocoder()
 
+    # Кнопка показа шаблонов (вне формы)
+    if st.button("📋 Показать шаблоны вопросов ДАРЯ"):
+        st.session_state['show_templates'] = not st.session_state.get('show_templates', False)
+
+    if st.session_state.get('show_templates', False):
+        show_question_templates()
+        st.markdown("---")
+
     # ========== ФОРМА ДОБАВЛЕНИЯ НОВОГО ПУНКТА ==========
     with st.form("add_settlement_form"):
         st.markdown("### ➕ Добавление нового населенного пункта")
         st.info("Заполните информацию. Координаты можно найти автоматически или ввести вручную.")
-
-        # Кнопка для показа шаблонов вопросов (вне формы, чтобы работала)
-        if st.button("📋 Показать шаблоны вопросов ДАРЯ"):
-            st.session_state['show_templates'] = not st.session_state.get('show_templates', False)
-
-        if st.session_state.get('show_templates', False):
-            show_question_templates()
-            st.markdown("---")
 
         col1, col2 = st.columns(2)
 
@@ -557,7 +557,7 @@ def show_editor_interface(df):
         with col2:
             st.markdown("#### 🌍 Координаты")
 
-            # Кнопка автоматического поиска координат
+            # Кнопка автоматического поиска координат (submit button)
             search_clicked = st.form_submit_button("🔍 Найти координаты автоматически")
 
             if search_clicked and new_settlement:
@@ -656,7 +656,6 @@ def show_editor_interface(df):
                         st.session_state['selected_question_num'] = None
                         st.session_state['selected_question_text'] = None
 
-                        # Предлагаем очистить форму
                         st.rerun()
                     else:
                         st.error(f"❌ Ошибка при добавлении: {result}")
