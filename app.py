@@ -519,6 +519,7 @@ def show_editor_interface(df):
     st.markdown("## ✏️ Режим редактирования данных")
     st.markdown("---")
 
+    # Ссылка на Google Таблицу
     st.markdown("""
     <div style='background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 20px;'>
         <b>📊 Прямой доступ к Google Таблице:</b><br>
@@ -531,196 +532,231 @@ def show_editor_interface(df):
 
     geocoder = LocationGeocoder()
 
-    st.markdown("### ➕ Добавление нового населенного пункта")
-    st.info(
-        "Заполните информацию. Координаты могут быть найдены автоматически. После добавления данные сохранятся в Google Таблицу.")
+    # ========== ФОРМА ДОБАВЛЕНИЯ НОВОГО ПУНКТА ==========
+    with st.form("add_settlement_form"):
+        st.markdown("### ➕ Добавление нового населенного пункта")
+        st.info("Заполните информацию. Координаты можно найти автоматически или ввести вручную.")
 
-    if st.button("📋 Показать шаблоны вопросов ДАРЯ"):
-        st.session_state['show_templates'] = not st.session_state.get('show_templates', False)
+        # Кнопка для показа шаблонов вопросов (вне формы, чтобы работала)
+        if st.button("📋 Показать шаблоны вопросов ДАРЯ"):
+            st.session_state['show_templates'] = not st.session_state.get('show_templates', False)
 
-    if st.session_state.get('show_templates', False):
-        show_question_templates()
-        st.markdown("---")
+        if st.session_state.get('show_templates', False):
+            show_question_templates()
+            st.markdown("---")
 
-    col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2)
 
-    with col1:
-        new_region = st.text_input("Регион *", value="Удмуртская Республика")
-        new_district = st.text_input("Район *", placeholder="Завьяловский район")
-        new_settlement = st.text_input("Населенный пункт *", placeholder="д. Новая Деревня")
-        new_type = st.selectbox("Тип населенного пункта", ["деревня", "село", "поселок", "город", "хутор"])
-        new_altitude = st.number_input("Высота над уровнем моря (м)", value=100, step=10)
+        with col1:
+            new_region = st.text_input("Регион *", value="Удмуртская Республика")
+            new_district = st.text_input("Район *", placeholder="Завьяловский район")
+            new_settlement = st.text_input("Населенный пункт *", placeholder="д. Новая Деревня")
+            new_type = st.selectbox("Тип населенного пункта", ["деревня", "село", "поселок", "город", "хутор"])
+            new_altitude = st.number_input("Высота над уровнем моря (м)", value=100, step=10)
 
-    with col2:
-        st.markdown("#### 🌍 Координаты")
+        with col2:
+            st.markdown("#### 🌍 Координаты")
 
-        if st.button("🔍 Найти координаты", type="primary"):
-            if new_settlement:
+            # Кнопка автоматического поиска координат
+            search_clicked = st.form_submit_button("🔍 Найти координаты автоматически")
+
+            if search_clicked and new_settlement:
                 with st.spinner("Поиск координат..."):
                     result, wiki_info = geocoder.get_coordinates(new_settlement, new_district, new_region)
 
                     if result:
                         lat, lon = result
-                        st.session_state['new_lat'] = lat
-                        st.session_state['new_lon'] = lon
+                        st.session_state['auto_lat'] = lat
+                        st.session_state['auto_lon'] = lon
                         st.success(f"✅ Найдено: {lat:.6f}, {lon:.6f}")
-
-                        m = folium.Map(location=[lat, lon], zoom_start=12)
-                        folium.Marker([lat, lon], popup=new_settlement).add_to(m)
-                        st_folium(m, width=400, height=300)
                     else:
                         st.error("❌ Не найдено в базе данных")
-
                         if wiki_info:
-                            st.markdown("---")
-                            st.markdown("### 🔍 Не удалось найти координаты автоматически")
-                            st.markdown(f"""
-                            **Попробуйте найти координаты в Википедии:**
+                            st.info(f"💡 Попробуйте найти координаты на Википедии: [ссылка]({wiki_info['page_url']})")
 
-                            1. Перейдите по ссылке: [{wiki_info['query']}]({wiki_info['page_url']})
-                            2. Или воспользуйтесь поиском: [{wiki_info['query']} - поиск]({wiki_info['search_url']})
-                            """)
+            # Поля для ручного ввода координат
+            st.markdown("**Введите координаты вручную:**")
+            col_lat, col_lon = st.columns(2)
+            with col_lat:
+                new_lat = st.number_input(
+                    "Широта",
+                    value=st.session_state.get('auto_lat', st.session_state.get('new_lat', 57.0)),
+                    format="%.6f",
+                    step=0.0001
+                )
+            with col_lon:
+                new_lon = st.number_input(
+                    "Долгота",
+                    value=st.session_state.get('auto_lon', st.session_state.get('new_lon', 53.0)),
+                    format="%.6f",
+                    step=0.0001
+                )
 
-                            st.markdown("---")
-                            st.markdown("### 🧮 Конвертер координат (градусы → десятичные градусы)")
-                            st.info(
-                                "Скопируйте координаты из Википедии (например: 56°51′22″ с.ш. 53°12′41″ в.д.) и вставьте в поля ниже")
+        # Диалектные особенности
+        st.markdown("#### 📝 Диалектные особенности")
 
-                            # Используем отдельные переменные для конвертера, не связанные с session_state
-                            converter_col1, converter_col2 = st.columns(2)
+        default_question = st.session_state.get('template_question', '')
+        num_questions = st.number_input("Количество вопросов", min_value=1, max_value=10, value=3)
 
-                            with converter_col1:
-                                dms_lat_input = st.text_input(
-                                    "Широта (градусы)",
-                                    placeholder="56°51′22″ с.ш.",
-                                    key="dms_lat_converter"
-                                )
+        questions_data = {}
+        question_options = list(DARYA_QUESTIONS.values())
 
-                            with converter_col2:
-                                dms_lon_input = st.text_input(
-                                    "Долгота (градусы)",
-                                    placeholder="53°12′41″ в.д.",
-                                    key="dms_lon_converter"
-                                )
+        for i in range(int(num_questions)):
+            col_q, col_a = st.columns(2)
+            with col_q:
+                q_index = 0
+                if default_question and default_question in question_options:
+                    q_index = question_options.index(default_question) + 1
+                q = st.selectbox(
+                    f"Вопрос {i + 1}",
+                    [""] + question_options,
+                    index=q_index,
+                    key=f"new_q_{i}"
+                )
+            with col_a:
+                a = st.text_input(f"Ответ {i + 1}", key=f"new_a_{i}")
+            if q and a:
+                questions_data[f"question_{i + 1}"] = q
+                questions_data[f"answer_{i + 1}"] = a
 
-                            # Кнопка конвертации без rerun
-                            if st.button("🔄 Конвертировать координаты", key="convert_coords_btn"):
-                                converted_lat = convert_dms_to_decimal(dms_lat_input)
-                                converted_lon = convert_dms_to_decimal(dms_lon_input)
+        # Очищаем шаблон после использования
+        if st.session_state.get('template_question'):
+            st.session_state['template_question'] = None
 
-                                if converted_lat is not None and converted_lon is not None:
-                                    # Показываем результат и предлагаем применить
-                                    st.success(
-                                        f"✅ Сконвертировано: Широта = {converted_lat}, Долгота = {converted_lon}")
+        # Кнопка отправки формы
+        submitted = st.form_submit_button("✅ Добавить населенный пункт в Google Таблицу", type="primary",
+                                          use_container_width=True)
 
-                                    # Кнопка для применения сконвертированных координат
-                                    if st.button("📌 Применить эти координаты", key="apply_converted"):
-                                        st.session_state['new_lat'] = converted_lat
-                                        st.session_state['new_lon'] = converted_lon
-                                        st.success("✅ Координаты применены! Можете продолжить заполнение формы.")
-                                        st.rerun()
-                                else:
-                                    if converted_lat is None:
-                                        st.error("❌ Не удалось распознать широту. Пример: 56°51′22″ с.ш.")
-                                    if converted_lon is None:
-                                        st.error("❌ Не удалось распознать долготу. Пример: 53°12′41″ в.д.")
+        if submitted:
+            if new_region and new_district and new_settlement:
+                new_data = {
+                    "region": new_region,
+                    "district": new_district,
+                    "settlement": new_settlement,
+                    "type": new_type,
+                    "latitude": new_lat,
+                    "longitude": new_lon,
+                    "altitude": new_altitude,
+                    **questions_data
+                }
 
-                            # Примеры для быстрой вставки (без автоматического rerun)
-                            st.markdown("**📋 Примеры для копирования:**")
+                with st.spinner("Добавление данных в Google Таблицу..."):
+                    success, result = add_to_google_sheets(new_data)
 
-                            # Создаем примеры в виде текста для копирования
-                            examples_data = {
-                                "📍 Ижевск": ("56°51′00″ с.ш.", "53°12′00″ в.д."),
-                                "📍 Воткинск": ("57°03′00″ с.ш.", "53°59′00″ в.д."),
-                                "📍 Глазов": ("58°08′00″ с.ш.", "52°40′00″ в.д."),
-                                "📍 Сарапул": ("56°28′00″ с.ш.", "53°48′00″ в.д."),
-                                "📍 Можга": ("56°26′00″ с.ш.", "52°13′00″ в.д."),
-                            }
+                    if success:
+                        st.success(f"✅ Пункт '{new_settlement}' успешно добавлен в Google Таблицу! (ID: {result})")
+                        st.info(
+                            "🔄 Данные появятся на карте через 60 секунд (или нажмите 'Обновить данные' на главной странице)")
 
-                            # Отображаем примеры в виде кнопок копирования
-                            for place_name, (lat_ex, lon_ex) in examples_data.items():
-                                if st.button(f"📋 {place_name}", key=f"example_{place_name}"):
-                                    st.session_state['dms_lat_converter'] = lat_ex
-                                    st.session_state['dms_lon_converter'] = lon_ex
-                                    st.rerun()
+                        # Очищаем session state
+                        st.session_state['auto_lat'] = 57.0
+                        st.session_state['auto_lon'] = 53.0
+                        st.session_state['new_lat'] = 57.0
+                        st.session_state['new_lon'] = 53.0
+                        st.session_state['selected_question_num'] = None
+                        st.session_state['selected_question_text'] = None
 
-        st.markdown("#### Или введите координаты вручную:")
-        st.caption("💡 Формат: десятичные градусы (например: 56.8563, 53.2115)")
-
-        col_lat, col_lon = st.columns(2)
-        with col_lat:
-            new_lat = st.number_input("Широта", value=st.session_state.get('new_lat', 57.0), format="%.6f", step=0.0001)
-        with col_lon:
-            new_lon = st.number_input("Долгота", value=st.session_state.get('new_lon', 53.0), format="%.6f",
-                                      step=0.0001)
-
-    st.markdown("#### 📝 Диалектные особенности")
-
-    default_question = st.session_state.get('template_question', '')
-    num_questions = st.number_input("Количество вопросов", min_value=1, max_value=10, value=3)
-
-    questions_data = {}
-    question_options = list(DARYA_QUESTIONS.values())
-
-    for i in range(int(num_questions)):
-        col_q, col_a = st.columns(2)
-        with col_q:
-            q_index = 0
-            if default_question and default_question in question_options:
-                q_index = question_options.index(default_question) + 1
-            q = st.selectbox(
-                f"Вопрос {i + 1}",
-                [""] + question_options,
-                index=q_index,
-                key=f"new_q_{i}"
-            )
-        with col_a:
-            a = st.text_input(f"Ответ {i + 1}", key=f"new_a_{i}")
-        if q and a:
-            questions_data[f"question_{i + 1}"] = q
-            questions_data[f"answer_{i + 1}"] = a
-
-    if st.session_state.get('template_question'):
-        st.session_state['template_question'] = None
-
-    if st.button("✅ Добавить населенный пункт в Google Таблицу", type="primary", use_container_width=True):
-        if new_region and new_district and new_settlement:
-            new_data = {
-                "region": new_region,
-                "district": new_district,
-                "settlement": new_settlement,
-                "type": new_type,
-                "latitude": new_lat,
-                "longitude": new_lon,
-                "altitude": new_altitude,
-                **questions_data
-            }
-
-            with st.spinner("Добавление данных в Google Таблицу..."):
-                success, result = add_to_google_sheets(new_data)
-
-                if success:
-                    st.success(f"✅ Пункт '{new_settlement}' успешно добавлен в Google Таблицу! (ID: {result})")
-                    st.info(
-                        "🔄 Данные появятся на карте через 60 секунд (или нажмите 'Обновить данные' на главной странице)")
-
-                    st.session_state['new_lat'] = 57.0
-                    st.session_state['new_lon'] = 53.0
-                    st.session_state['selected_question_num'] = None
-                    st.session_state['selected_question_text'] = None
-
-                    if st.button("🔄 Очистить форму для следующей записи"):
+                        # Предлагаем очистить форму
                         st.rerun()
-                else:
-                    st.error(f"❌ Ошибка при добавлении: {result}")
-                    st.info("Вы можете добавить данные вручную через Google Таблицу по ссылке выше")
+                    else:
+                        st.error(f"❌ Ошибка при добавлении: {result}")
+                        st.info("Вы можете добавить данные вручную через Google Таблицу по ссылке выше")
+            else:
+                st.error("❌ Заполните обязательные поля (*)")
+
+    # ========== КОНВЕРТЕР КООРДИНАТ (отдельный блок, не исчезает) ==========
+    st.markdown("---")
+    st.markdown("## 🧮 Конвертер координат (градусы → десятичные градусы)")
+    st.info(
+        "Если координаты не найдены автоматически, скопируйте их из Википедии и сконвертируйте здесь. Результат можно скопировать в поля выше.")
+
+    conv_col1, conv_col2 = st.columns(2)
+
+    with conv_col1:
+        dms_lat_input = st.text_input(
+            "Широта в градусах",
+            placeholder='Пример: 56°51′22″ с.ш. или 56.8563',
+            key="dms_lat_main"
+        )
+
+    with conv_col2:
+        dms_lon_input = st.text_input(
+            "Долгота в градусах",
+            placeholder='Пример: 53°12′41″ в.д. или 53.2115',
+            key="dms_lon_main"
+        )
+
+    # Кнопка конвертации
+    if st.button("🔄 Конвертировать координаты", key="convert_main_btn"):
+        conv_lat = convert_dms_to_decimal(dms_lat_input)
+        conv_lon = convert_dms_to_decimal(dms_lon_input)
+
+        if conv_lat is not None and conv_lon is not None:
+            st.success(f"### Результат конвертации:")
+            st.code(f"Широта: {conv_lat}\nДолгота: {conv_lon}", language="text")
+            st.info("💡 Скопируйте эти значения и вставьте в поля 'Широта' и 'Долгота' в форме выше")
+
+            # Кнопка для автоматической вставки
+            if st.button("📌 Автоматически вставить в форму", key="auto_insert_btn"):
+                st.session_state['auto_lat'] = conv_lat
+                st.session_state['auto_lon'] = conv_lon
+                st.session_state['new_lat'] = conv_lat
+                st.session_state['new_lon'] = conv_lon
+                st.success("✅ Координаты вставлены в форму! Продолжите заполнение.")
+                st.rerun()
         else:
-            st.error("❌ Заполните обязательные поля (*)")
+            if conv_lat is None:
+                st.error("❌ Не удалось распознать широту. Пример: 56°51′22″ с.ш. или 56.8563")
+            if conv_lon is None:
+                st.error("❌ Не удалось распознать долготу. Пример: 53°12′41″ в.д. или 53.2115")
+
+    # Примеры для быстрой вставки
+    st.markdown("**📋 Примеры для копирования (нажмите на пример - он скопируется в поля выше):**")
+
+    examples_col1, examples_col2, examples_col3 = st.columns(3)
+
+    with examples_col1:
+        if st.button("📍 Ижевск (56°51′ с.ш., 53°12′ в.д.)"):
+            st.session_state['dms_lat_main'] = "56°51′00″ с.ш."
+            st.session_state['dms_lon_main'] = "53°12′00″ в.д."
+            st.rerun()
+
+    with examples_col2:
+        if st.button("📍 Воткинск (57°03′ с.ш., 53°59′ в.д.)"):
+            st.session_state['dms_lat_main'] = "57°03′00″ с.ш."
+            st.session_state['dms_lon_main'] = "53°59′00″ в.д."
+            st.rerun()
+
+    with examples_col3:
+        if st.button("📍 Глазов (58°08′ с.ш., 52°40′ в.д.)"):
+            st.session_state['dms_lat_main'] = "58°08′00″ с.ш."
+            st.session_state['dms_lon_main'] = "52°40′00″ в.д."
+            st.rerun()
+
+    # Дополнительные примеры
+    examples_col4, examples_col5, examples_col6 = st.columns(3)
+
+    with examples_col4:
+        if st.button("📍 Сарапул (56°28′ с.ш., 53°48′ в.д.)"):
+            st.session_state['dms_lat_main'] = "56°28′00″ с.ш."
+            st.session_state['dms_lon_main'] = "53°48′00″ в.д."
+            st.rerun()
+
+    with examples_col5:
+        if st.button("📍 Можга (56°26′ с.ш., 52°13′ в.д.)"):
+            st.session_state['dms_lat_main'] = "56°26′00″ с.ш."
+            st.session_state['dms_lon_main'] = "52°13′00″ в.д."
+            st.rerun()
+
+    with examples_col6:
+        if st.button("📍 Тарасово (Сарапульский р-н)"):
+            st.session_state['dms_lat_main'] = "56°30′00″ с.ш."
+            st.session_state['dms_lon_main'] = "53°45′00″ в.д."
+            st.rerun()
 
     st.markdown("---")
     st.info(
         "💡 **Совет:** Вы также можете редактировать данные напрямую в Google Таблице по ссылке вверху страницы. Изменения появятся на карте автоматически.")
-
 
 # -------------------------------
 # 10. ЗАГРУЗКА ДАННЫХ
