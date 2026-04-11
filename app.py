@@ -408,12 +408,111 @@ def show_editor_interface(df):
     st.markdown("## ✏️ Режим редактирования данных")
     st.markdown("---")
 
+    # Ссылка на Google Таблицу
+    st.markdown("""
+    <div style='background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 20px;'>
+        <b>📊 Прямой доступ к Google Таблице:</b><br>
+        <a href="https://docs.google.com/spreadsheets/d/11hjMbvXri7tRfD_201wQwtnzV54S7xBFTxAGmJEtasM/edit?gid=0#gid=0" target="_blank">
+            🔗 Открыть Google Таблицу для ручного редактирования
+        </a><br>
+        <small>Вы можете редактировать данные напрямую в таблице. Изменения появятся на карте через 60 секунд.</small>
+    </div>
+    """, unsafe_allow_html=True)
+
     geocoder = LocationGeocoder()
 
-    tab1, tab2 = st.tabs(["➕ Добавить пункт", "🔄 Обновить координаты"])
+    # Функция для добавления данных в Google Sheets
+    def add_to_google_sheets(data_dict):
+        """Добавляет новую запись в Google Sheets"""
+        try:
+            # Определяем права доступа
+            scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+
+            # Пытаемся загрузить из секретов Streamlit Cloud
+            try:
+                if "gcp" in st.secrets:
+                    creds_info = {
+                        "type": st.secrets["gcp"]["type"],
+                        "project_id": st.secrets["gcp"]["project_id"],
+                        "private_key_id": st.secrets["gcp"]["private_key_id"],
+                        "private_key": st.secrets["gcp"]["private_key"],
+                        "client_email": st.secrets["gcp"]["client_email"],
+                        "client_id": st.secrets["gcp"]["client_id"],
+                        "auth_uri": st.secrets["gcp"]["auth_uri"],
+                        "token_uri": st.secrets["gcp"]["token_uri"],
+                        "auth_provider_x509_cert_url": st.secrets["gcp"]["auth_provider_x509_cert_url"],
+                        "client_x509_cert_url": st.secrets["gcp"]["client_x509_cert_url"]
+                    }
+                    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+                else:
+                    # Если нет секретов, пробуем локальный файл
+                    cred_path = Path(".streamlit/google-credentials.json")
+                    if not cred_path.exists():
+                        return False, "Файл с ключами не найден"
+                    creds = Credentials.from_service_account_file(str(cred_path), scopes=scopes)
+            except Exception as e:
+                # Если ошибка с секретами, пробуем локальный файл
+                cred_path = Path(".streamlit/google-credentials.json")
+                if not cred_path.exists():
+                    return False, f"Ошибка авторизации: {e}"
+                creds = Credentials.from_service_account_file(str(cred_path), scopes=scopes)
+
+            client = gspread.authorize(creds)
+            SHEET_ID = "11hjMbvXri7tRfD_201wQwtnzV54S7xBFTxAGmJEtasM"
+            sheet = client.open_by_key(SHEET_ID)
+            worksheet = sheet.get_worksheet(0)
+
+            # Получаем все текущие данные
+            all_data = worksheet.get_all_values()
+
+            # Определяем новую строку (id = последний + 1)
+            if len(all_data) > 1:
+                last_id = int(all_data[-1][0]) if all_data[-1][0].isdigit() else 0
+                new_id = last_id + 1
+            else:
+                new_id = 1
+
+            # Формируем новую строку в правильном порядке колонок
+            # Порядок колонок в таблице:
+            # id, region, district, settlement, settlement_type, latitude, longitude, altitude,
+            # question_1, answer_1, question_2, answer_2, question_3, answer_3, question_4, answer_4, question_5, answer_5
+
+            new_row = [
+                new_id,  # id
+                data_dict.get('region', ''),  # region
+                data_dict.get('district', ''),  # district
+                data_dict.get('settlement', ''),  # settlement
+                data_dict.get('type', ''),  # settlement_type
+                data_dict.get('latitude', ''),  # latitude
+                data_dict.get('longitude', ''),  # longitude
+                data_dict.get('altitude', ''),  # altitude
+                data_dict.get('question_1', ''),  # question_1
+                data_dict.get('answer_1', ''),  # answer_1
+                data_dict.get('question_2', ''),  # question_2
+                data_dict.get('answer_2', ''),  # answer_2
+                data_dict.get('question_3', ''),  # question_3
+                data_dict.get('answer_3', ''),  # answer_3
+                data_dict.get('question_4', ''),  # question_4
+                data_dict.get('answer_4', ''),  # answer_4
+                data_dict.get('question_5', ''),  # question_5
+                data_dict.get('answer_5', ''),  # answer_5
+            ]
+
+            # Добавляем строку
+            worksheet.append_row(new_row)
+
+            return True, new_id
+
+        except Exception as e:
+            return False, str(e)
+
+    # Создаем вкладки
+    tab1 = st.tabs(["➕ Добавить пункт"])[0]
 
     with tab1:
         st.markdown("### Добавление нового населенного пункта")
+        st.info(
+            "Заполните информацию. Координаты могут быть найдены автоматически. После добавления данные сохранятся в Google Таблицу.")
 
         # Кнопка для показа шаблонов вопросов
         if st.button("📋 Показать шаблоны вопросов ДАРЯ"):
@@ -430,6 +529,7 @@ def show_editor_interface(df):
             new_district = st.text_input("Район *", placeholder="Завьяловский район")
             new_settlement = st.text_input("Населенный пункт *", placeholder="д. Новая Деревня")
             new_type = st.selectbox("Тип населенного пункта", ["деревня", "село", "поселок", "город", "хутор"])
+            new_altitude = st.number_input("Высота над уровнем моря (м)", value=100, step=10)
 
         with col2:
             st.markdown("#### 🌍 Координаты")
@@ -512,38 +612,50 @@ def show_editor_interface(df):
 
         # Очищаем шаблон после использования
         if st.session_state.get('template_question'):
-            del st.session_state['template_question']
+            st.session_state['template_question'] = None
 
-        if st.button("✅ Добавить населенный пункт", use_container_width=True):
+        # Кнопка добавления
+        if st.button("✅ Добавить населенный пункт в Google Таблицу", type="primary", use_container_width=True):
             if new_region and new_district and new_settlement:
-                st.success(f"✅ Пункт {new_settlement} готов к добавлению!")
-                st.json({
+                # Формируем данные для добавления
+                new_data = {
                     "region": new_region,
                     "district": new_district,
                     "settlement": new_settlement,
                     "type": new_type,
                     "latitude": new_lat,
                     "longitude": new_lon,
+                    "altitude": new_altitude,
                     **questions_data
-                })
+                }
+
+                # Показываем прогресс
+                with st.spinner("Добавление данных в Google Таблицу..."):
+                    success, result = add_to_google_sheets(new_data)
+
+                    if success:
+                        st.success(f"✅ Пункт '{new_settlement}' успешно добавлен в Google Таблицу! (ID: {result})")
+                        st.info(
+                            "🔄 Данные появятся на карте через 60 секунд (или нажмите 'Обновить данные' на главной странице)")
+
+                        # Очищаем форму
+                        st.session_state['new_lat'] = 57.0
+                        st.session_state['new_lon'] = 53.0
+                        st.session_state['selected_question_num'] = None
+                        st.session_state['selected_question_text'] = None
+
+                        # Предлагаем очистить поля
+                        if st.button("🔄 Очистить форму для следующей записи"):
+                            st.rerun()
+                    else:
+                        st.error(f"❌ Ошибка при добавлении: {result}")
+                        st.info("Вы можете добавить данные вручную через Google Таблицу по ссылке выше")
             else:
                 st.error("❌ Заполните обязательные поля (*)")
 
-    with tab2:
-        st.markdown("### Обновление координат для существующих пунктов")
-        if 'latitude' in df.columns and 'longitude' in df.columns:
-            missing_coords = df[df['latitude'].isna() | df['longitude'].isna()]
-            if len(missing_coords) > 0:
-                st.warning(f"⚠️ Найдено {len(missing_coords)} пунктов без координат")
-                st.dataframe(missing_coords[['region', 'district', 'settlement']])
-
-                if st.button("🔄 Найти координаты для всех", type="primary"):
-                    with st.spinner("Поиск координат..."):
-                        updated_df = geocoder.batch_geocode(df.copy())
-                        st.success("✅ Координаты обновлены!")
-                        st.rerun()
-            else:
-                st.success("✅ Все пункты имеют координаты!")
+        st.markdown("---")
+        st.info(
+            "💡 **Совет:** Вы также можете редактировать данные напрямую в Google Таблице по ссылке вверху страницы. Изменения появятся на карте автоматически.")
 
 
 # -------------------------------
