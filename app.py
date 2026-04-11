@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 import numpy as np
 from scipy.spatial import ConvexHull
+import re
 
 # Импорт из geocoder.py
 from geocoder import LocationGeocoder, DARYA_QUESTIONS, QUESTION_TO_NUMBER
@@ -95,7 +96,6 @@ class IsoglossManager:
         if not selected_question or selected_question == "Все вопросы":
             return m
 
-        # Получаем все уникальные ответы на выбранный вопрос
         answers = set()
         for q_col in [c for c in df.columns if c.startswith('question_')]:
             mask = df[q_col] == selected_question
@@ -104,7 +104,6 @@ class IsoglossManager:
                 if ans_col in df.columns:
                     answers.update(df.loc[mask, ans_col].dropna().unique())
 
-        # Цвета для разных ответов
         colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'darkred', 'darkblue']
 
         for i, answer in enumerate(answers):
@@ -165,16 +164,13 @@ def show_question_templates():
     st.markdown("### 📋 Шаблоны вопросов из ДАРЯ")
     st.info("Выберите вопрос из списка, чтобы автоматически вставить его в поля ниже")
 
-    # Поиск по вопросам
     search_q = st.text_input("🔍 Поиск вопроса", placeholder="например: произношение, лексика, синтаксис...")
 
-    # Фильтруем вопросы
     filtered_questions = DARYA_QUESTIONS.items()
     if search_q:
         filtered_questions = [(num, q) for num, q in filtered_questions
                               if search_q.lower() in q.lower()]
 
-    # Отображаем вопросы в виде карточек
     cols = st.columns(3)
     for i, (num, question) in enumerate(filtered_questions):
         with cols[i % 3]:
@@ -183,7 +179,6 @@ def show_question_templates():
                 st.session_state['selected_question_text'] = question
                 st.success(f"✅ Выбран вопрос: №{num} - {question}")
 
-    # Показываем выбранный вопрос
     if st.session_state.get('selected_question_text'):
         st.markdown("---")
         st.markdown(
@@ -402,13 +397,128 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
 
 
 # -------------------------------
-# 7. ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ
+# 7. ФУНКЦИЯ КОНВЕРТАЦИИ КООРДИНАТ
+# -------------------------------
+def convert_dms_to_decimal(dms_string):
+    """Конвертирует строку с градусами в десятичные градусы"""
+    if not dms_string:
+        return None
+
+    # Проверяем, может уже десятичные
+    try:
+        val = float(dms_string)
+        return val
+    except:
+        pass
+
+    # Извлекаем числовые значения
+    numbers = re.findall(r'(\d+(?:\.\d+)?)', dms_string)
+
+    if not numbers:
+        return None
+
+    numbers = [float(n) for n in numbers]
+
+    # Определяем формат
+    if len(numbers) == 1:
+        decimal = numbers[0]
+    elif len(numbers) == 2:
+        decimal = numbers[0] + numbers[1] / 60
+    else:
+        decimal = numbers[0] + numbers[1] / 60 + numbers[2] / 3600
+
+    # Определяем направление
+    is_south = 'ю.ш.' in dms_string or 'южн' in dms_string or 'S' in dms_string.upper()
+    is_west = 'з.д.' in dms_string or 'зап' in dms_string or 'W' in dms_string.upper()
+
+    if is_south or is_west:
+        decimal = -decimal
+
+    return round(decimal, 6)
+
+
+# -------------------------------
+# 8. ФУНКЦИЯ ДЛЯ ДОБАВЛЕНИЯ В GOOGLE SHEETS
+# -------------------------------
+def add_to_google_sheets(data_dict):
+    """Добавляет новую запись в Google Sheets"""
+    try:
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+
+        try:
+            if "gcp" in st.secrets:
+                creds_info = {
+                    "type": st.secrets["gcp"]["type"],
+                    "project_id": st.secrets["gcp"]["project_id"],
+                    "private_key_id": st.secrets["gcp"]["private_key_id"],
+                    "private_key": st.secrets["gcp"]["private_key"],
+                    "client_email": st.secrets["gcp"]["client_email"],
+                    "client_id": st.secrets["gcp"]["client_id"],
+                    "auth_uri": st.secrets["gcp"]["auth_uri"],
+                    "token_uri": st.secrets["gcp"]["token_uri"],
+                    "auth_provider_x509_cert_url": st.secrets["gcp"]["auth_provider_x509_cert_url"],
+                    "client_x509_cert_url": st.secrets["gcp"]["client_x509_cert_url"]
+                }
+                creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+            else:
+                cred_path = Path(".streamlit/google-credentials.json")
+                if not cred_path.exists():
+                    return False, "Файл с ключами не найден"
+                creds = Credentials.from_service_account_file(str(cred_path), scopes=scopes)
+        except Exception as e:
+            cred_path = Path(".streamlit/google-credentials.json")
+            if not cred_path.exists():
+                return False, f"Ошибка авторизации: {e}"
+            creds = Credentials.from_service_account_file(str(cred_path), scopes=scopes)
+
+        client = gspread.authorize(creds)
+        SHEET_ID = "11hjMbvXri7tRfD_201wQwtnzV54S7xBFTxAGmJEtasM"
+        sheet = client.open_by_key(SHEET_ID)
+        worksheet = sheet.get_worksheet(0)
+
+        all_data = worksheet.get_all_values()
+
+        if len(all_data) > 1:
+            last_id = int(all_data[-1][0]) if all_data[-1][0].isdigit() else 0
+            new_id = last_id + 1
+        else:
+            new_id = 1
+
+        new_row = [
+            new_id,
+            data_dict.get('region', ''),
+            data_dict.get('district', ''),
+            data_dict.get('settlement', ''),
+            data_dict.get('type', ''),
+            data_dict.get('latitude', ''),
+            data_dict.get('longitude', ''),
+            data_dict.get('altitude', ''),
+            data_dict.get('question_1', ''),
+            data_dict.get('answer_1', ''),
+            data_dict.get('question_2', ''),
+            data_dict.get('answer_2', ''),
+            data_dict.get('question_3', ''),
+            data_dict.get('answer_3', ''),
+            data_dict.get('question_4', ''),
+            data_dict.get('answer_4', ''),
+            data_dict.get('question_5', ''),
+            data_dict.get('answer_5', ''),
+        ]
+
+        worksheet.append_row(new_row)
+        return True, new_id
+
+    except Exception as e:
+        return False, str(e)
+
+
+# -------------------------------
+# 9. ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ
 # -------------------------------
 def show_editor_interface(df):
     st.markdown("## ✏️ Режим редактирования данных")
     st.markdown("---")
 
-    # Ссылка на Google Таблицу
     st.markdown("""
     <div style='background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 20px;'>
         <b>📊 Прямой доступ к Google Таблице:</b><br>
@@ -421,245 +531,187 @@ def show_editor_interface(df):
 
     geocoder = LocationGeocoder()
 
-    # Функция для добавления данных в Google Sheets
-    def add_to_google_sheets(data_dict):
-        """Добавляет новую запись в Google Sheets"""
-        try:
-            # Определяем права доступа
-            scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    st.markdown("### ➕ Добавление нового населенного пункта")
+    st.info(
+        "Заполните информацию. Координаты могут быть найдены автоматически. После добавления данные сохранятся в Google Таблицу.")
 
-            # Пытаемся загрузить из секретов Streamlit Cloud
-            try:
-                if "gcp" in st.secrets:
-                    creds_info = {
-                        "type": st.secrets["gcp"]["type"],
-                        "project_id": st.secrets["gcp"]["project_id"],
-                        "private_key_id": st.secrets["gcp"]["private_key_id"],
-                        "private_key": st.secrets["gcp"]["private_key"],
-                        "client_email": st.secrets["gcp"]["client_email"],
-                        "client_id": st.secrets["gcp"]["client_id"],
-                        "auth_uri": st.secrets["gcp"]["auth_uri"],
-                        "token_uri": st.secrets["gcp"]["token_uri"],
-                        "auth_provider_x509_cert_url": st.secrets["gcp"]["auth_provider_x509_cert_url"],
-                        "client_x509_cert_url": st.secrets["gcp"]["client_x509_cert_url"]
-                    }
-                    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-                else:
-                    # Если нет секретов, пробуем локальный файл
-                    cred_path = Path(".streamlit/google-credentials.json")
-                    if not cred_path.exists():
-                        return False, "Файл с ключами не найден"
-                    creds = Credentials.from_service_account_file(str(cred_path), scopes=scopes)
-            except Exception as e:
-                # Если ошибка с секретами, пробуем локальный файл
-                cred_path = Path(".streamlit/google-credentials.json")
-                if not cred_path.exists():
-                    return False, f"Ошибка авторизации: {e}"
-                creds = Credentials.from_service_account_file(str(cred_path), scopes=scopes)
+    if st.button("📋 Показать шаблоны вопросов ДАРЯ"):
+        st.session_state['show_templates'] = not st.session_state.get('show_templates', False)
 
-            client = gspread.authorize(creds)
-            SHEET_ID = "11hjMbvXri7tRfD_201wQwtnzV54S7xBFTxAGmJEtasM"
-            sheet = client.open_by_key(SHEET_ID)
-            worksheet = sheet.get_worksheet(0)
+    if st.session_state.get('show_templates', False):
+        show_question_templates()
+        st.markdown("---")
 
-            # Получаем все текущие данные
-            all_data = worksheet.get_all_values()
+    col1, col2 = st.columns(2)
 
-            # Определяем новую строку (id = последний + 1)
-            if len(all_data) > 1:
-                last_id = int(all_data[-1][0]) if all_data[-1][0].isdigit() else 0
-                new_id = last_id + 1
-            else:
-                new_id = 1
+    with col1:
+        new_region = st.text_input("Регион *", value="Удмуртская Республика")
+        new_district = st.text_input("Район *", placeholder="Завьяловский район")
+        new_settlement = st.text_input("Населенный пункт *", placeholder="д. Новая Деревня")
+        new_type = st.selectbox("Тип населенного пункта", ["деревня", "село", "поселок", "город", "хутор"])
+        new_altitude = st.number_input("Высота над уровнем моря (м)", value=100, step=10)
 
-            # Формируем новую строку в правильном порядке колонок
-            # Порядок колонок в таблице:
-            # id, region, district, settlement, settlement_type, latitude, longitude, altitude,
-            # question_1, answer_1, question_2, answer_2, question_3, answer_3, question_4, answer_4, question_5, answer_5
+    with col2:
+        st.markdown("#### 🌍 Координаты")
 
-            new_row = [
-                new_id,  # id
-                data_dict.get('region', ''),  # region
-                data_dict.get('district', ''),  # district
-                data_dict.get('settlement', ''),  # settlement
-                data_dict.get('type', ''),  # settlement_type
-                data_dict.get('latitude', ''),  # latitude
-                data_dict.get('longitude', ''),  # longitude
-                data_dict.get('altitude', ''),  # altitude
-                data_dict.get('question_1', ''),  # question_1
-                data_dict.get('answer_1', ''),  # answer_1
-                data_dict.get('question_2', ''),  # question_2
-                data_dict.get('answer_2', ''),  # answer_2
-                data_dict.get('question_3', ''),  # question_3
-                data_dict.get('answer_3', ''),  # answer_3
-                data_dict.get('question_4', ''),  # question_4
-                data_dict.get('answer_4', ''),  # answer_4
-                data_dict.get('question_5', ''),  # question_5
-                data_dict.get('answer_5', ''),  # answer_5
-            ]
+        if st.button("🔍 Найти координаты", type="primary"):
+            if new_settlement:
+                with st.spinner("Поиск координат..."):
+                    result, wiki_info = geocoder.get_coordinates(new_settlement, new_district, new_region)
 
-            # Добавляем строку
-            worksheet.append_row(new_row)
+                    if result:
+                        lat, lon = result
+                        st.session_state['new_lat'] = lat
+                        st.session_state['new_lon'] = lon
+                        st.success(f"✅ Найдено: {lat:.6f}, {lon:.6f}")
 
-            return True, new_id
+                        m = folium.Map(location=[lat, lon], zoom_start=12)
+                        folium.Marker([lat, lon], popup=new_settlement).add_to(m)
+                        st_folium(m, width=400, height=300)
+                    else:
+                        st.error("❌ Не найдено в базе данных")
 
-        except Exception as e:
-            return False, str(e)
+                        if wiki_info:
+                            st.markdown("---")
+                            st.markdown("### 🔍 Не удалось найти координаты автоматически")
+                            st.markdown(f"""
+                            **Попробуйте найти координаты в Википедии:**
 
-    # Создаем вкладки
-    tab1 = st.tabs(["➕ Добавить пункт"])[0]
+                            1. Перейдите по ссылке: [{wiki_info['query']}]({wiki_info['page_url']})
+                            2. Или воспользуйтесь поиском: [{wiki_info['query']} - поиск]({wiki_info['search_url']})
+                            """)
 
-    with tab1:
-        st.markdown("### Добавление нового населенного пункта")
-        st.info(
-            "Заполните информацию. Координаты могут быть найдены автоматически. После добавления данные сохранятся в Google Таблицу.")
+                            st.markdown("---")
+                            st.markdown("### 🧮 Конвертер координат (градусы → десятичные градусы)")
+                            st.info(
+                                "Скопируйте координаты из Википедии (например: 56°51′22″ с.ш. 53°12′41″ в.д.) и вставьте в поля ниже")
 
-        # Кнопка для показа шаблонов вопросов
-        if st.button("📋 Показать шаблоны вопросов ДАРЯ"):
-            st.session_state['show_templates'] = not st.session_state.get('show_templates', False)
+                            col_dms1, col_dms2 = st.columns(2)
 
-        if st.session_state.get('show_templates', False):
-            show_question_templates()
-            st.markdown("---")
+                            with col_dms1:
+                                dms_lat = st.text_input("Широта (градусы)", placeholder="56°51′22″ с.ш.", key="dms_lat")
 
-        col1, col2 = st.columns(2)
+                            with col_dms2:
+                                dms_lon = st.text_input("Долгота (градусы)", placeholder="53°12′41″ в.д.",
+                                                        key="dms_lon")
 
-        with col1:
-            new_region = st.text_input("Регион *", value="Удмуртская Республика")
-            new_district = st.text_input("Район *", placeholder="Завьяловский район")
-            new_settlement = st.text_input("Населенный пункт *", placeholder="д. Новая Деревня")
-            new_type = st.selectbox("Тип населенного пункта", ["деревня", "село", "поселок", "город", "хутор"])
-            new_altitude = st.number_input("Высота над уровнем моря (м)", value=100, step=10)
+                            if st.button("🔄 Конвертировать координаты", key="convert_btn"):
+                                converted_lat = convert_dms_to_decimal(dms_lat)
+                                converted_lon = convert_dms_to_decimal(dms_lon)
 
-        with col2:
-            st.markdown("#### 🌍 Координаты")
+                                if converted_lat is not None and converted_lon is not None:
+                                    st.session_state['new_lat'] = converted_lat
+                                    st.session_state['new_lon'] = converted_lon
+                                    st.success(
+                                        f"✅ Сконвертировано: Широта = {converted_lat}, Долгота = {converted_lon}")
 
-            if st.button("🔍 Найти координаты", type="primary"):
-                if new_settlement:
-                    with st.spinner("Поиск координат..."):
-                        result, wiki_info = geocoder.get_coordinates(new_settlement, new_district, new_region)
+                                    m = folium.Map(location=[converted_lat, converted_lon], zoom_start=12)
+                                    folium.Marker([converted_lat, converted_lon], popup=new_settlement).add_to(m)
+                                    st_folium(m, width=400, height=300)
+                                else:
+                                    if converted_lat is None:
+                                        st.error("❌ Не удалось распознать широту")
+                                    if converted_lon is None:
+                                        st.error("❌ Не удалось распознать долготу")
 
-                        if result:
-                            lat, lon = result
-                            st.session_state['new_lat'] = lat
-                            st.session_state['new_lon'] = lon
-                            st.success(f"✅ Найдено: {lat:.6f}, {lon:.6f}")
+                            st.markdown("**📋 Примеры для быстрой вставки:**")
+                            cols_ex = st.columns(3)
+                            with cols_ex[0]:
+                                if st.button("📌 Ижевск"):
+                                    st.session_state['dms_lat'] = "56°51′00″ с.ш."
+                                    st.session_state['dms_lon'] = "53°12′00″ в.д."
+                                    st.rerun()
+                            with cols_ex[1]:
+                                if st.button("📌 Воткинск"):
+                                    st.session_state['dms_lat'] = "57°03′00″ с.ш."
+                                    st.session_state['dms_lon'] = "53°59′00″ в.д."
+                                    st.rerun()
+                            with cols_ex[2]:
+                                if st.button("📌 Глазов"):
+                                    st.session_state['dms_lat'] = "58°08′00″ с.ш."
+                                    st.session_state['dms_lon'] = "52°40′00″ в.д."
+                                    st.rerun()
 
-                            # Показываем карту
-                            m = folium.Map(location=[lat, lon], zoom_start=12)
-                            folium.Marker([lat, lon], popup=new_settlement).add_to(m)
-                            st_folium(m, width=400, height=300)
-                        else:
-                            st.error("❌ Не найдено в базе данных")
+        st.markdown("#### Или введите координаты вручную:")
+        st.caption("💡 Формат: десятичные градусы (например: 56.8563, 53.2115)")
 
-                            if wiki_info:
-                                st.markdown("---")
-                                st.markdown("### 🔍 Не удалось найти координаты автоматически")
-                                st.markdown(f"""
-                                **Попробуйте найти координаты в Википедии:**
-
-                                1. Перейдите по ссылке: [{wiki_info['query']}]({wiki_info['page_url']})
-                                2. Или воспользуйтесь поиском: [{wiki_info['query']} - поиск]({wiki_info['search_url']})
-
-                                **Как найти координаты на странице Википедии:**
-                                - Координаты обычно находятся в правом верхнем углу статьи
-                                - Или в информационной таблице справа
-                                - Координаты выглядят как: **56°51′22″ с.ш. 53°12′41″ в.д.**
-                                - Для перевода в десятичные градусы используйте онлайн-конвертер
-                                """)
-
-                                if "тарасово" in new_settlement.lower():
-                                    st.markdown(f"""
-                                    **📌 Пример для {new_settlement}:**
-                                    - Википедия: [Тарасово (Сарапульский район)](https://ru.wikipedia.org/wiki/Тарасово_(Сарапульский_район))
-                                    """)
-
-            st.markdown("#### Или введите координаты вручную:")
-            st.caption("💡 Формат: десятичные градусы (например: 56.8563, 53.2115)")
-
+        col_lat, col_lon = st.columns(2)
+        with col_lat:
             new_lat = st.number_input("Широта", value=st.session_state.get('new_lat', 57.0), format="%.6f", step=0.0001)
+        with col_lon:
             new_lon = st.number_input("Долгота", value=st.session_state.get('new_lon', 53.0), format="%.6f",
                                       step=0.0001)
 
-        st.markdown("#### 📝 Диалектные особенности")
+    st.markdown("#### 📝 Диалектные особенности")
 
-        # Используем шаблон вопроса, если он есть
-        default_question = st.session_state.get('template_question', '')
+    default_question = st.session_state.get('template_question', '')
+    num_questions = st.number_input("Количество вопросов", min_value=1, max_value=10, value=3)
 
-        num_questions = st.number_input("Количество вопросов", min_value=1, max_value=10, value=3)
+    questions_data = {}
+    question_options = list(DARYA_QUESTIONS.values())
 
-        questions_data = {}
-        question_options = list(DARYA_QUESTIONS.values())
+    for i in range(int(num_questions)):
+        col_q, col_a = st.columns(2)
+        with col_q:
+            q_index = 0
+            if default_question and default_question in question_options:
+                q_index = question_options.index(default_question) + 1
+            q = st.selectbox(
+                f"Вопрос {i + 1}",
+                [""] + question_options,
+                index=q_index,
+                key=f"new_q_{i}"
+            )
+        with col_a:
+            a = st.text_input(f"Ответ {i + 1}", key=f"new_a_{i}")
+        if q and a:
+            questions_data[f"question_{i + 1}"] = q
+            questions_data[f"answer_{i + 1}"] = a
 
-        for i in range(int(num_questions)):
-            col_q, col_a = st.columns(2)
-            with col_q:
-                # Выбор вопроса с автодополнением
-                q_index = 0
-                if default_question and default_question in question_options:
-                    q_index = question_options.index(default_question) + 1
-                q = st.selectbox(
-                    f"Вопрос {i + 1}",
-                    [""] + question_options,
-                    index=q_index,
-                    key=f"new_q_{i}"
-                )
-            with col_a:
-                a = st.text_input(f"Ответ {i + 1}", key=f"new_a_{i}")
-            if q and a:
-                questions_data[f"question_{i + 1}"] = q
-                questions_data[f"answer_{i + 1}"] = a
+    if st.session_state.get('template_question'):
+        st.session_state['template_question'] = None
 
-        # Очищаем шаблон после использования
-        if st.session_state.get('template_question'):
-            st.session_state['template_question'] = None
+    if st.button("✅ Добавить населенный пункт в Google Таблицу", type="primary", use_container_width=True):
+        if new_region and new_district and new_settlement:
+            new_data = {
+                "region": new_region,
+                "district": new_district,
+                "settlement": new_settlement,
+                "type": new_type,
+                "latitude": new_lat,
+                "longitude": new_lon,
+                "altitude": new_altitude,
+                **questions_data
+            }
 
-        # Кнопка добавления
-        if st.button("✅ Добавить населенный пункт в Google Таблицу", type="primary", use_container_width=True):
-            if new_region and new_district and new_settlement:
-                # Формируем данные для добавления
-                new_data = {
-                    "region": new_region,
-                    "district": new_district,
-                    "settlement": new_settlement,
-                    "type": new_type,
-                    "latitude": new_lat,
-                    "longitude": new_lon,
-                    "altitude": new_altitude,
-                    **questions_data
-                }
+            with st.spinner("Добавление данных в Google Таблицу..."):
+                success, result = add_to_google_sheets(new_data)
 
-                # Показываем прогресс
-                with st.spinner("Добавление данных в Google Таблицу..."):
-                    success, result = add_to_google_sheets(new_data)
+                if success:
+                    st.success(f"✅ Пункт '{new_settlement}' успешно добавлен в Google Таблицу! (ID: {result})")
+                    st.info(
+                        "🔄 Данные появятся на карте через 60 секунд (или нажмите 'Обновить данные' на главной странице)")
 
-                    if success:
-                        st.success(f"✅ Пункт '{new_settlement}' успешно добавлен в Google Таблицу! (ID: {result})")
-                        st.info(
-                            "🔄 Данные появятся на карте через 60 секунд (или нажмите 'Обновить данные' на главной странице)")
+                    st.session_state['new_lat'] = 57.0
+                    st.session_state['new_lon'] = 53.0
+                    st.session_state['selected_question_num'] = None
+                    st.session_state['selected_question_text'] = None
 
-                        # Очищаем форму
-                        st.session_state['new_lat'] = 57.0
-                        st.session_state['new_lon'] = 53.0
-                        st.session_state['selected_question_num'] = None
-                        st.session_state['selected_question_text'] = None
+                    if st.button("🔄 Очистить форму для следующей записи"):
+                        st.rerun()
+                else:
+                    st.error(f"❌ Ошибка при добавлении: {result}")
+                    st.info("Вы можете добавить данные вручную через Google Таблицу по ссылке выше")
+        else:
+            st.error("❌ Заполните обязательные поля (*)")
 
-                        # Предлагаем очистить поля
-                        if st.button("🔄 Очистить форму для следующей записи"):
-                            st.rerun()
-                    else:
-                        st.error(f"❌ Ошибка при добавлении: {result}")
-                        st.info("Вы можете добавить данные вручную через Google Таблицу по ссылке выше")
-            else:
-                st.error("❌ Заполните обязательные поля (*)")
-
-        st.markdown("---")
-        st.info(
-            "💡 **Совет:** Вы также можете редактировать данные напрямую в Google Таблице по ссылке вверху страницы. Изменения появятся на карте автоматически.")
+    st.markdown("---")
+    st.info(
+        "💡 **Совет:** Вы также можете редактировать данные напрямую в Google Таблице по ссылке вверху страницы. Изменения появятся на карте автоматически.")
 
 
 # -------------------------------
-# 8. ЗАГРУЗКА ДАННЫХ
+# 10. ЗАГРУЗКА ДАННЫХ
 # -------------------------------
 with st.spinner('🔄 Загрузка данных из Google Sheets...'):
     df = load_data_from_gsheet()
@@ -669,7 +721,7 @@ if df.empty:
     st.stop()
 
 # -------------------------------
-# 9. БОКОВАЯ ПАНЕЛЬ
+# 11. БОКОВАЯ ПАНЕЛЬ
 # -------------------------------
 with st.sidebar:
     st.markdown("## 🔍 Поиск и фильтры")
@@ -686,12 +738,10 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Поиск по населенному пункту
     search_settlement = st.text_input("🔎 Найти населенный пункт", placeholder="например: Русская Лоза")
 
     st.markdown("---")
 
-    # Поиск по лингвистическим единицам
     st.markdown("## 🔬 Поиск по диалектным особенностям")
 
     search_linguistic = st.text_input(
@@ -709,12 +759,10 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Выбор вопроса (с номерами)
     st.markdown("## 📋 Анализ по вопросам")
     questions_display = get_unique_questions(df)
     selected_question_display = st.selectbox("Выберите вопрос из программы ДАРЯ", ["Все вопросы"] + questions_display)
 
-    # Извлекаем оригинальный вопрос для фильтрации
     if selected_question_display == "Все вопросы":
         selected_question = "Все вопросы"
     else:
@@ -727,19 +775,16 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Показ изоглосс
     st.session_state['show_isoglosses'] = st.checkbox("🗺️ Показывать изоглоссы (ареалы распространения)",
                                                       value=st.session_state['show_isoglosses'])
 
     st.markdown("---")
 
-    # Фильтр по региону
     regions = ['Все регионы'] + sorted(df['region'].unique().tolist())
     selected_region = st.selectbox("📍 Регион", regions)
 
     st.markdown("---")
 
-    # Статистика
     st.markdown("## 📊 Статистика")
     col1, col2 = st.columns(2)
     with col1:
@@ -751,7 +796,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ
     with st.expander("📖 ПОЛНАЯ ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ", expanded=False):
         st.markdown("""
         ### 🗺️ РАБОТА С КАРТОЙ
@@ -784,8 +828,9 @@ with st.sidebar:
 
         **Если координаты не найдены:**
         - Перейдите по ссылке на Википедию
-        - Найдите координаты на странице
-        - Введите их вручную
+        - Скопируйте координаты со страницы
+        - Вставьте в конвертер координат
+        - Нажмите "Конвертировать"
 
         ### 🗺️ ИЗОГЛОССЫ (АРЕАЛЫ)
 
@@ -798,7 +843,7 @@ with st.sidebar:
         """)
 
 # -------------------------------
-# 10. ФИЛЬТРАЦИЯ ДАННЫХ
+# 12. ФИЛЬТРАЦИЯ ДАННЫХ
 # -------------------------------
 filtered_df = df.copy()
 
@@ -829,7 +874,7 @@ if selected_question and selected_question != "Все вопросы":
     )
 
 # -------------------------------
-# 11. ОСНОВНОЙ ИНТЕРФЕЙС
+# 13. ОСНОВНОЙ ИНТЕРФЕЙС
 # -------------------------------
 if st.session_state['edit_mode']:
     show_editor_interface(df)
@@ -856,7 +901,6 @@ else:
         st.markdown("## 📋 Легенда")
 
         if selected_question and selected_question != "Все вопросы":
-            # Находим номер вопроса
             q_number = QUESTION_TO_NUMBER.get(selected_question, "")
             if q_number:
                 st.markdown(f"**Вопрос №{q_number}:** *{selected_question}*")
@@ -886,7 +930,7 @@ else:
             """)
 
 # -------------------------------
-# 12. ТАБЛИЦА С ДАННЫМИ
+# 14. ТАБЛИЦА С ДАННЫМИ
 # -------------------------------
 st.markdown("---")
 st.markdown("## 📋 Данные населенных пунктов")
@@ -911,7 +955,7 @@ st.dataframe(
 )
 
 # -------------------------------
-# 13. КНОПКИ ЭКСПОРТА
+# 15. КНОПКИ ЭКСПОРТА
 # -------------------------------
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
@@ -930,7 +974,7 @@ with col2:
         st.rerun()
 
 # -------------------------------
-# 14. ПОДВАЛ
+# 16. ПОДВАЛ
 # -------------------------------
 st.markdown("---")
 st.markdown(
@@ -941,7 +985,7 @@ st.markdown(
         <b>🗺️ Изоглоссы:</b> показывают границы распространения диалектных явлений<br>
         <b>🔍 Поиск по лемме:</b> работает по всем диалектным особенностям<br>
         <b>📝 Номера вопросов:</b> соответствуют программе ДАРЯ<br>
-        <b>🌐 Википедия:</b> ссылки для поиска координат при отсутствии в базе<br>
+        <b>🌐 Конвертер координат:</b> преобразует градусы из Википедии в десятичные<br>
         <hr>
         © Диалектологическая карта Удмуртии | Проект выполнен в рамках изучения русских говоров
     </div>
