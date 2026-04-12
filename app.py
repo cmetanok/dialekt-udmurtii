@@ -13,6 +13,31 @@ import re
 # Импорт из geocoder.py
 from geocoder import LocationGeocoder, DARYA_QUESTIONS, QUESTION_TO_NUMBER
 
+
+# -------------------------------
+# ФУНКЦИЯ ДЛЯ ОБРАБОТКИ ВВОДА КООРДИНАТ
+# -------------------------------
+def process_coordinate_input(value):
+    """Преобразует введенное значение координаты в число с точкой"""
+    if value is None:
+        return None
+
+    # Преобразуем в строку
+    value_str = str(value).strip()
+
+    # Заменяем запятую на точку
+    value_str = value_str.replace(',', '.')
+
+    # Удаляем пробелы
+    value_str = value_str.replace(' ', '')
+
+    # Пробуем преобразовать в число
+    try:
+        return float(value_str)
+    except ValueError:
+        return None
+
+
 # -------------------------------
 # 1. НАСТРОЙКА СТРАНИЦЫ
 # -------------------------------
@@ -39,6 +64,10 @@ if 'selected_question_text' not in st.session_state:
     st.session_state['selected_question_text'] = None
 if 'template_question' not in st.session_state:
     st.session_state['template_question'] = None
+if 'auto_lat' not in st.session_state:
+    st.session_state['auto_lat'] = 57.0
+if 'auto_lon' not in st.session_state:
+    st.session_state['auto_lon'] = 53.0
 
 # Заголовок
 st.markdown("""
@@ -337,67 +366,7 @@ def get_color_for_answer(question, answer):
 
 
 # -------------------------------
-# 6. СОЗДАНИЕ КАРТЫ С ИЗОГЛОССАМИ
-# -------------------------------
-def create_map(df, selected_question=None, selected_answer=None, show_isoglosses=True):
-    center_lat = 57.0
-    center_lon = 53.0
-
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles='OpenStreetMap')
-
-    if show_isoglosses and selected_question and selected_question != "Все вопросы":
-        iso_manager = IsoglossManager()
-        m = iso_manager.add_isoglosses_to_map(m, df, selected_question)
-
-    for idx, row in df.iterrows():
-        if pd.notna(row['latitude']) and pd.notna(row['longitude']):
-            color = 'blue'
-            settlement = row['settlement'] if 'settlement' in row.index else ''
-            settlement_type = row['settlement_type'] if 'settlement_type' in row.index and pd.notna(
-                row['settlement_type']) else ''
-            district = row['district'] if 'district' in row.index and pd.notna(row['district']) else ''
-            region = row['region'] if 'region' in row.index and pd.notna(row['region']) else ''
-
-            tooltip = f"{settlement}"
-            popup_text = f"""
-                <b>{settlement}</b><br>
-                <i>{settlement_type}</i><br>
-                <b>Район:</b> {district}<br>
-                <b>Регион:</b> {region}<br>
-                <hr>
-            """
-
-            if selected_question and selected_question != "Все вопросы":
-                for q_col in [c for c in df.columns if c.startswith('question_')]:
-                    if row[q_col] == selected_question:
-                        ans_col = q_col.replace('question_', 'answer_')
-                        if ans_col in df.columns:
-                            answer = row[ans_col]
-                            tooltip += f" - {answer}"
-                            popup_text += f"<b>Вопрос:</b> {selected_question}<br>"
-                            popup_text += f"<b>Ответ:</b> {answer}<br>"
-                            color = get_color_for_answer(selected_question, answer)
-                            break
-
-            popup_text += "<hr><b>Все диалектные особенности:</b><br>"
-            for q_col in [c for c in df.columns if c.startswith('question_')]:
-                if pd.notna(row[q_col]):
-                    ans_col = q_col.replace('question_', 'answer_')
-                    if ans_col in df.columns and pd.notna(row[ans_col]):
-                        popup_text += f"• {row[q_col]}: <b>{row[ans_col]}</b><br>"
-
-            folium.Marker(
-                [row['latitude'], row['longitude']],
-                popup=folium.Popup(popup_text, max_width=300),
-                tooltip=tooltip,
-                icon=folium.Icon(color=color, icon='info-sign')
-            ).add_to(m)
-
-    return m
-
-
-# -------------------------------
-# 7. ФУНКЦИЯ КОНВЕРТАЦИИ КООРДИНАТ
+# 6. ФУНКЦИЯ КОНВЕРТАЦИИ КООРДИНАТ
 # -------------------------------
 def convert_dms_to_decimal(dms_string):
     """Конвертирует строку с градусами в десятичные градусы"""
@@ -406,7 +375,7 @@ def convert_dms_to_decimal(dms_string):
 
     # Проверяем, может уже десятичные
     try:
-        val = float(dms_string)
+        val = float(dms_string.replace(',', '.'))
         return val
     except:
         pass
@@ -438,7 +407,7 @@ def convert_dms_to_decimal(dms_string):
 
 
 # -------------------------------
-# 8. ФУНКЦИЯ ДЛЯ ДОБАВЛЕНИЯ В GOOGLE SHEETS
+# 7. ФУНКЦИЯ ДЛЯ ДОБАВЛЕНИЯ В GOOGLE SHEETS
 # -------------------------------
 def add_to_google_sheets(data_dict):
     """Добавляет новую запись в Google Sheets"""
@@ -513,6 +482,66 @@ def add_to_google_sheets(data_dict):
 
 
 # -------------------------------
+# 8. СОЗДАНИЕ КАРТЫ С ИЗОГЛОССАМИ
+# -------------------------------
+def create_map(df, selected_question=None, selected_answer=None, show_isoglosses=True):
+    center_lat = 57.0
+    center_lon = 53.0
+
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles='OpenStreetMap')
+
+    if show_isoglosses and selected_question and selected_question != "Все вопросы":
+        iso_manager = IsoglossManager()
+        m = iso_manager.add_isoglosses_to_map(m, df, selected_question)
+
+    for idx, row in df.iterrows():
+        if pd.notna(row['latitude']) and pd.notna(row['longitude']):
+            color = 'blue'
+            settlement = row['settlement'] if 'settlement' in row.index else ''
+            settlement_type = row['settlement_type'] if 'settlement_type' in row.index and pd.notna(
+                row['settlement_type']) else ''
+            district = row['district'] if 'district' in row.index and pd.notna(row['district']) else ''
+            region = row['region'] if 'region' in row.index and pd.notna(row['region']) else ''
+
+            tooltip = f"{settlement}"
+            popup_text = f"""
+                <b>{settlement}</b><br>
+                <i>{settlement_type}</i><br>
+                <b>Район:</b> {district}<br>
+                <b>Регион:</b> {region}<br>
+                <hr>
+            """
+
+            if selected_question and selected_question != "Все вопросы":
+                for q_col in [c for c in df.columns if c.startswith('question_')]:
+                    if row[q_col] == selected_question:
+                        ans_col = q_col.replace('question_', 'answer_')
+                        if ans_col in df.columns:
+                            answer = row[ans_col]
+                            tooltip += f" - {answer}"
+                            popup_text += f"<b>Вопрос:</b> {selected_question}<br>"
+                            popup_text += f"<b>Ответ:</b> {answer}<br>"
+                            color = get_color_for_answer(selected_question, answer)
+                            break
+
+            popup_text += "<hr><b>Все диалектные особенности:</b><br>"
+            for q_col in [c for c in df.columns if c.startswith('question_')]:
+                if pd.notna(row[q_col]):
+                    ans_col = q_col.replace('question_', 'answer_')
+                    if ans_col in df.columns and pd.notna(row[ans_col]):
+                        popup_text += f"• {row[q_col]}: <b>{row[ans_col]}</b><br>"
+
+            folium.Marker(
+                [row['latitude'], row['longitude']],
+                popup=folium.Popup(popup_text, max_width=300),
+                tooltip=tooltip,
+                icon=folium.Icon(color=color, icon='info-sign')
+            ).add_to(m)
+
+    return m
+
+
+# -------------------------------
 # 9. ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ
 # -------------------------------
 def show_editor_interface(df):
@@ -576,21 +605,50 @@ def show_editor_interface(df):
 
             # Поля для ручного ввода координат
             st.markdown("**Введите координаты вручную:**")
+            st.caption("💡 Поддерживаются оба формата: точка (56.253333) или запятая (56,253333)")
+
             col_lat, col_lon = st.columns(2)
             with col_lat:
-                new_lat = st.number_input(
+                lat_value = st.session_state.get('auto_lat', st.session_state.get('new_lat', 57.0))
+                # Преобразуем число в строку и заменяем точку на запятую для отображения
+                if isinstance(lat_value, (int, float)):
+                    lat_display = str(lat_value).replace('.', ',')
+                else:
+                    lat_display = str(lat_value).replace(',', '.')
+
+                lat_input = st.text_input(
                     "Широта",
-                    value=st.session_state.get('auto_lat', st.session_state.get('new_lat', 57.0)),
-                    format="%.6f",
-                    step=0.0001
+                    value=lat_display,
+                    key="lat_input"
                 )
+                # Обрабатываем ввод - заменяем запятую на точку
+                processed_lat = lat_input.replace(',', '.')
+                try:
+                    new_lat = float(processed_lat)
+                    st.session_state['new_lat'] = new_lat
+                except ValueError:
+                    st.error("❌ Неверный формат широты")
+                    new_lat = 57.0
+
             with col_lon:
-                new_lon = st.number_input(
+                lon_value = st.session_state.get('auto_lon', st.session_state.get('new_lon', 53.0))
+                if isinstance(lon_value, (int, float)):
+                    lon_display = str(lon_value).replace('.', ',')
+                else:
+                    lon_display = str(lon_value).replace(',', '.')
+
+                lon_input = st.text_input(
                     "Долгота",
-                    value=st.session_state.get('auto_lon', st.session_state.get('new_lon', 53.0)),
-                    format="%.6f",
-                    step=0.0001
+                    value=lon_display,
+                    key="lon_input"
                 )
+                processed_lon = lon_input.replace(',', '.')
+                try:
+                    new_lon = float(processed_lon)
+                    st.session_state['new_lon'] = new_lon
+                except ValueError:
+                    st.error("❌ Неверный формат долготы")
+                    new_lon = 53.0
 
         # Диалектные особенности
         st.markdown("#### 📝 Диалектные особенности")
@@ -757,6 +815,7 @@ def show_editor_interface(df):
     st.info(
         "💡 **Совет:** Вы также можете редактировать данные напрямую в Google Таблице по ссылке вверху страницы. Изменения появятся на карте автоматически.")
 
+
 # -------------------------------
 # 10. ЗАГРУЗКА ДАННЫХ
 # -------------------------------
@@ -869,15 +928,14 @@ with st.sidebar:
         **Добавление пункта:**
         1. Нажмите "✏️ Редактор"
         2. Заполните поля: регион, район, название
-        3. Нажмите "🔍 Найти координаты"
+        3. Нажмите "🔍 Найти координаты автоматически"
         4. Выберите вопросы из шаблонов ДАРЯ
         5. Нажмите "✅ Добавить"
 
         **Если координаты не найдены:**
-        - Перейдите по ссылке на Википедию
-        - Скопируйте координаты со страницы
-        - Вставьте в конвертер координат
-        - Нажмите "Конвертировать"
+        - Используйте конвертер координат внизу страницы
+        - Скопируйте координаты из Википедии
+        - Нажмите "Конвертировать", затем "Автоматически вставить в форму"
 
         ### 🗺️ ИЗОГЛОССЫ (АРЕАЛЫ)
 
@@ -1033,6 +1091,7 @@ st.markdown(
         <b>🔍 Поиск по лемме:</b> работает по всем диалектным особенностям<br>
         <b>📝 Номера вопросов:</b> соответствуют программе ДАРЯ<br>
         <b>🌐 Конвертер координат:</b> преобразует градусы из Википедии в десятичные<br>
+        <b>📌 Поддержка форматов:</b> точка (56.253333) или запятая (56,253333)<br>
         <hr>
         © Диалектологическая карта Удмуртии | Проект выполнен в рамках изучения русских говоров
     </div>
