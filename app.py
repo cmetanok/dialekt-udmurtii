@@ -453,25 +453,40 @@ def add_to_google_sheets(data_dict):
         else:
             new_id = 1
 
+        # Функция для форматирования координат (замена запятой на точку)
+        def format_coordinate(value):
+            if value is None or value == "":
+                return ""
+            # Преобразуем в строку
+            value_str = str(value)
+            # Заменяем запятую на точку
+            value_str = value_str.replace(',', '.')
+            # Пробуем преобразовать в число и обратно для чистоты формата
+            try:
+                return str(float(value_str))
+            except:
+                return value_str
+
+        # Формируем новую строку с правильным форматированием координат
         new_row = [
-            new_id,
-            data_dict.get('region', ''),
-            data_dict.get('district', ''),
-            data_dict.get('settlement', ''),
-            data_dict.get('type', ''),
-            data_dict.get('latitude', ''),
-            data_dict.get('longitude', ''),
-            data_dict.get('altitude', ''),
-            data_dict.get('question_1', ''),
-            data_dict.get('answer_1', ''),
-            data_dict.get('question_2', ''),
-            data_dict.get('answer_2', ''),
-            data_dict.get('question_3', ''),
-            data_dict.get('answer_3', ''),
-            data_dict.get('question_4', ''),
-            data_dict.get('answer_4', ''),
-            data_dict.get('question_5', ''),
-            data_dict.get('answer_5', ''),
+            new_id,  # id
+            data_dict.get('region', ''),  # region
+            data_dict.get('district', ''),  # district
+            data_dict.get('settlement', ''),  # settlement
+            data_dict.get('type', ''),  # settlement_type
+            format_coordinate(data_dict.get('latitude', '')),  # latitude (с точкой!)
+            format_coordinate(data_dict.get('longitude', '')),  # longitude (с точкой!)
+            data_dict.get('altitude', ''),  # altitude
+            data_dict.get('question_1', ''),  # question_1
+            data_dict.get('answer_1', ''),  # answer_1
+            data_dict.get('question_2', ''),  # question_2
+            data_dict.get('answer_2', ''),  # answer_2
+            data_dict.get('question_3', ''),  # question_3
+            data_dict.get('answer_3', ''),  # answer_3
+            data_dict.get('question_4', ''),  # question_4
+            data_dict.get('answer_4', ''),  # answer_4
+            data_dict.get('question_5', ''),  # question_5
+            data_dict.get('answer_5', ''),  # answer_5
         ]
 
         worksheet.append_row(new_row)
@@ -580,8 +595,8 @@ def show_editor_interface(df):
             new_region = st.text_input("Регион *", value="Удмуртская Республика")
             new_district = st.text_input("Район *", placeholder="Завьяловский район")
             new_settlement = st.text_input("Населенный пункт *", placeholder="д. Новая Деревня")
-            new_type = st.selectbox("Тип населенного пункта", ["деревня", "село", "поселок", "город", "хутор"])
-            new_altitude = st.number_input("Высота над уровнем моря (м)", value=100, step=10)
+            new_type = st.selectbox("Тип населенного пункта", ["деревня", "село", "поселок", "город"])
+
 
         with col2:
             st.markdown("#### 🌍 Координаты")
@@ -694,7 +709,6 @@ def show_editor_interface(df):
                     "type": new_type,
                     "latitude": new_lat,
                     "longitude": new_lon,
-                    "altitude": new_altitude,
                     **questions_data
                 }
 
@@ -723,7 +737,7 @@ def show_editor_interface(df):
 
     # ========== КОНВЕРТЕР КООРДИНАТ (отдельный блок, не исчезает) ==========
     st.markdown("---")
-    st.markdown("## 🧮 Конвертер координат (градусы → десятичные градусы)")
+    st.markdown("## Конвертер координат (градусы → десятичные градусы)")
     st.info(
         "Если координаты не найдены автоматически, скопируйте их из Википедии и сконвертируйте здесь. Результат можно скопировать в поля выше.")
 
