@@ -13,124 +13,8 @@ import re
 # Импорт из geocoder.py
 from geocoder import LocationGeocoder, DARYA_QUESTIONS, QUESTION_TO_NUMBER
 
-
 # -------------------------------
-# ФУНКЦИЯ ДЛЯ ОБРАБОТКИ ВВОДА КООРДИНАТ
-# -------------------------------
-def process_coordinate_input(value):
-    """Преобразует введенное значение координаты в число с точкой"""
-    if value is None:
-        return None
-
-    value_str = str(value).strip()
-    value_str = value_str.replace(',', '.')
-    value_str = value_str.replace(' ', '')
-
-    try:
-        return float(value_str)
-    except ValueError:
-        return None
-
-
-# -------------------------------
-# ФУНКЦИЯ ДЛЯ РАБОТЫ С МНОЖЕСТВЕННЫМИ ОТВЕТАМИ
-# -------------------------------
-def split_answers(answer_str):
-    """Разделяет строку с ответами на список (разделитель ;)"""
-    if pd.isna(answer_str) or answer_str is None or answer_str == "":
-        return []
-    # Разделяем по ; (с пробелами)
-    parts = re.split(r';\s*', str(answer_str))
-    return [p.strip() for p in parts if p.strip()]
-
-
-def join_answers(answers_list):
-    """Объединяет список ответов в строку с разделителем ;"""
-    if not answers_list:
-        return ""
-    return "; ".join([str(a).strip() for a in answers_list if str(a).strip()])
-
-
-def get_all_unique_answers(df):
-    """Получает все уникальные ответы из всех колонок answer_X"""
-    all_answers = set()
-    for col in df.columns:
-        if col.startswith('answer_'):
-            for value in df[col].dropna().unique():
-                for answer in split_answers(value):
-                    if answer:
-                        all_answers.add(answer)
-    return sorted(list(all_answers))
-
-
-def search_by_linguistic_unit(df, search_term):
-    """Поиск по лингвистическим единицам (с поддержкой множественных ответов)"""
-    if not search_term:
-        return df
-
-    search_term_lower = search_term.lower().strip()
-    mask = pd.Series(False, index=df.index)
-
-    for col in df.columns:
-        if col.startswith('answer_'):
-            for idx, row in df.iterrows():
-                if pd.notna(row[col]):
-                    answers = split_answers(row[col])
-                    for answer in answers:
-                        if search_term_lower in answer.lower():
-                            mask.iloc[idx] = True
-                            break
-    return df[mask]
-
-
-def get_all_answers_for_question(df, question):
-    """Получает все уникальные варианты ответов для вопроса"""
-    answers = set()
-    for q_col in df.columns:
-        if q_col.startswith('question_'):
-            q_num = q_col.split('_')[1]
-            a_col = f'answer_{q_num}'
-
-            if a_col in df.columns:
-                mask = df[q_col] == question
-                for value in df.loc[mask, a_col].dropna().unique():
-                    for answer in split_answers(value):
-                        if answer:
-                            answers.add(answer)
-    return sorted(list(answers))
-
-
-def filter_by_question_and_answer(df, question, answer):
-    """Фильтрует данные по вопросу и конкретному варианту ответа.
-    Показывает пункты, где выбранный ответ присутствует среди множественных ответов."""
-    if not question or question == "Все вопросы" or not answer or answer == "Все ответы":
-        return df
-
-    mask = pd.Series(False, index=df.index)
-
-    for q_col in df.columns:
-        if q_col.startswith('question_'):
-            q_num = q_col.split('_')[1]
-            a_col = f'answer_{q_num}'
-
-            if a_col in df.columns:
-                for idx, row in df.iterrows():
-                    if row[q_col] == question and pd.notna(row[a_col]):
-                        answers_list = split_answers(row[a_col])
-                        if answer in answers_list:
-                            mask.iloc[idx] = True
-    return df[mask]
-
-
-def get_color_for_answer(answer, idx):
-    """Определяет цвет для варианта ответа"""
-    colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'darkred', 'darkblue']
-    hash_val = hash(str(answer)) % len(colors)
-    return colors[hash_val]
-
-
-# -------------------------------
-# 1. НАСТРОЙКА СТРАНИЦЫ
+# НАСТРОЙКА СТРАНИЦЫ
 # -------------------------------
 st.set_page_config(
     page_title="Диалектологическая карта Удмуртии",
@@ -173,35 +57,187 @@ st.markdown("""
 
 
 # -------------------------------
-# 2. КЛАСС ДЛЯ УПРАВЛЕНИЯ ИЗОГЛОССАМИ
+# ФУНКЦИИ ДЛЯ РАБОТЫ С МНОЖЕСТВЕННЫМИ ОТВЕТАМИ
+# -------------------------------
+def split_answers(answer_str):
+    """Разделяет строку с ответами на список (разделитель ;)"""
+    if pd.isna(answer_str) or answer_str is None or answer_str == "":
+        return []
+    parts = re.split(r';\s*', str(answer_str))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def get_answer_for_question(row, question):
+    """Получает ответ(ы) для конкретного вопроса из строки данных"""
+    for col in row.index:
+        if col.startswith('question_') and row[col] == question:
+            q_num = col.split('_')[1]
+            a_col = f'answer_{q_num}'
+            if a_col in row.index and pd.notna(row[a_col]):
+                return split_answers(row[a_col])
+    return []
+
+
+def get_all_questions_with_answers(df):
+    """Получает все вопросы и соответствующие им ответы"""
+    questions_dict = {}
+    for idx, row in df.iterrows():
+        for col in df.columns:
+            if col.startswith('question_') and pd.notna(row[col]):
+                q = row[col]
+                q_num = col.split('_')[1]
+                a_col = f'answer_{q_num}'
+                if a_col in df.columns and pd.notna(row[a_col]):
+                    if q not in questions_dict:
+                        questions_dict[q] = set()
+                    for ans in split_answers(row[a_col]):
+                        questions_dict[q].add(ans)
+    return questions_dict
+
+
+def get_settlements_for_question_answer(df, question, answer):
+    """Получает список населенных пунктов, где есть конкретный ответ на вопрос"""
+    settlements = []
+    for idx, row in df.iterrows():
+        answers = get_answer_for_question(row, question)
+        if answer in answers:
+            settlements.append(idx)
+    return settlements
+
+
+# -------------------------------
+# ФУНКЦИИ ДЛЯ ФИЛЬТРАЦИИ
+# -------------------------------
+def get_unique_questions(df):
+    """Получает список всех вопросов из таблицы с номерами ДАРЯ"""
+    questions = set()
+    for col in df.columns:
+        if col.startswith('question_'):
+            for q in df[col].dropna().unique():
+                if q in QUESTION_TO_NUMBER:
+                    questions.add(f"[№{QUESTION_TO_NUMBER[q]}] {q}")
+                else:
+                    questions.add(q)
+    return sorted(list(questions))
+
+
+def get_original_question(display_question):
+    if display_question.startswith("[№"):
+        return display_question.split("] ", 1)[1]
+    return display_question
+
+
+def filter_df_by_question(df, question):
+    """Фильтрует DataFrame по наличию вопроса"""
+    if not question or question == "Все вопросы":
+        return df
+
+    mask = pd.Series(False, index=df.index)
+    for idx, row in df.iterrows():
+        answers = get_answer_for_question(row, question)
+        if answers:  # Если есть ответы на этот вопрос
+            mask.iloc[idx] = True
+    return df[mask]
+
+
+def filter_df_by_question_and_answer(df, question, answer):
+    """Фильтрует DataFrame по вопросу и конкретному ответу"""
+    if not question or question == "Все вопросы" or not answer or answer == "Все ответы":
+        return filter_df_by_question(df, question)
+
+    mask = pd.Series(False, index=df.index)
+    for idx, row in df.iterrows():
+        answers = get_answer_for_question(row, question)
+        if answer in answers:
+            mask.iloc[idx] = True
+    return df[mask]
+
+
+def filter_df_by_linguistic_unit(df, search_term):
+    """Фильтрует по поиску в ответах"""
+    if not search_term:
+        return df
+
+    search_term_lower = search_term.lower().strip()
+    mask = pd.Series(False, index=df.index)
+
+    for idx, row in df.iterrows():
+        for col in df.columns:
+            if col.startswith('answer_') and pd.notna(row[col]):
+                answers = split_answers(row[col])
+                for ans in answers:
+                    if search_term_lower in ans.lower():
+                        mask.iloc[idx] = True
+                        break
+            if mask.iloc[idx]:
+                break
+    return df[mask]
+
+
+def get_all_linguistic_units(df):
+    """Получает все уникальные лингвистические единицы"""
+    units = set()
+    for col in df.columns:
+        if col.startswith('answer_'):
+            for val in df[col].dropna().unique():
+                for ans in split_answers(val):
+                    units.add(ans)
+    return sorted(list(units))
+
+
+def get_available_answers_for_question(df, question):
+    """Получает все возможные ответы для вопроса (для выпадающего списка)"""
+    if not question or question == "Все вопросы":
+        return []
+    answers = set()
+    for idx, row in df.iterrows():
+        for ans in get_answer_for_question(row, question):
+            answers.add(ans)
+    return sorted(list(answers))
+
+
+def get_color_for_answer(answer):
+    """Определяет цвет для ответа"""
+    colors = {
+        '[ɡ] взрывной': 'red',
+        '[ɣ] фрикативный': 'green',
+        'твердое [ца]': 'orange',
+        'мягкое [ц\'а]': 'purple',
+        '-ут': 'blue',
+        '-ат/-ят': 'darkblue',
+        'изба': 'lightgreen',
+        'хата': 'lightred',
+        'у меня есть': 'cadetblue',
+        'у мене є': 'pink',
+    }
+    if answer in colors:
+        return colors[answer]
+    # Если нет в словаре, используем хеш для стабильного цвета
+    color_list = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+    hash_val = hash(str(answer)) % len(color_list)
+    return color_list[hash_val]
+
+
+# -------------------------------
+# КЛАСС ДЛЯ УПРАВЛЕНИЯ ИЗОГЛОССАМИ
 # -------------------------------
 class IsoglossManager:
     def __init__(self):
         pass
 
     def get_points_for_answer(self, df, question, answer):
-        """Получает все точки для определенного вопроса и варианта ответа.
-        Включает пункты, где ответ присутствует среди множественных ответов."""
+        """Получает все точки для определенного вопроса и варианта ответа"""
         points = []
-
-        for q_col in df.columns:
-            if q_col.startswith('question_'):
-                q_num = q_col.split('_')[1]
-                a_col = f'answer_{q_num}'
-
-                if a_col in df.columns:
-                    for idx, row in df.iterrows():
-                        if row[q_col] == question and pd.notna(row[a_col]):
-                            answers_list = split_answers(row[a_col])
-                            if answer in answers_list:
-                                if pd.notna(row['latitude']) and pd.notna(row['longitude']):
-                                    points.append([row['latitude'], row['longitude']])
+        for idx, row in df.iterrows():
+            answers = get_answer_for_question(row, question)
+            if answer in answers:
+                if pd.notna(row['latitude']) and pd.notna(row['longitude']):
+                    points.append([row['latitude'], row['longitude']])
         return points
 
     def create_convex_hull(self, points):
         if len(points) < 3:
             return None
-
         points_array = np.array(points)
         try:
             hull = ConvexHull(points_array)
@@ -215,15 +251,14 @@ class IsoglossManager:
         if not selected_question or selected_question == "Все вопросы":
             return m
 
-        answers = get_all_answers_for_question(df, selected_question)
-        colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'darkred', 'darkblue']
+        answers = get_available_answers_for_question(df, selected_question)
 
-        for i, answer in enumerate(answers):
+        for answer in answers:
             points = self.get_points_for_answer(df, selected_question, answer)
             hull_points = self.create_convex_hull(points)
 
             if hull_points and len(hull_points) >= 3:
-                color = colors[i % len(colors)]
+                color = get_color_for_answer(answer)
 
                 folium.Polygon(
                     locations=hull_points,
@@ -249,60 +284,7 @@ class IsoglossManager:
 
 
 # -------------------------------
-# 3. ФУНКЦИИ ДЛЯ РАБОТЫ С ВОПРОСАМИ
-# -------------------------------
-def get_unique_questions(df):
-    """Получает список всех вопросов из таблицы с номерами ДАРЯ"""
-    questions = set()
-    for col in df.columns:
-        if col.startswith('question_'):
-            for q in df[col].dropna().unique():
-                if q in QUESTION_TO_NUMBER:
-                    questions.add(f"[№{QUESTION_TO_NUMBER[q]}] {q}")
-                else:
-                    questions.add(q)
-    return sorted(list(questions))
-
-
-def get_original_question(display_question):
-    if display_question.startswith("[№"):
-        return display_question.split("] ", 1)[1]
-    return display_question
-
-
-def show_question_templates():
-    st.markdown("### 📋 Шаблоны вопросов из ДАРЯ")
-    st.info("Выберите вопрос из списка, чтобы автоматически вставить его в поля ниже")
-
-    search_q = st.text_input("🔍 Поиск вопроса", placeholder="например: произношение, лексика, синтаксис...")
-
-    filtered_questions = DARYA_QUESTIONS.items()
-    if search_q:
-        filtered_questions = [(num, q) for num, q in filtered_questions
-                              if search_q.lower() in q.lower()]
-
-    cols = st.columns(3)
-    for i, (num, question) in enumerate(filtered_questions):
-        with cols[i % 3]:
-            if st.button(f"📌 №{num}: {question[:40]}...", key=f"q_{num}"):
-                st.session_state['selected_question_num'] = num
-                st.session_state['selected_question_text'] = question
-                st.success(f"✅ Выбран вопрос: №{num} - {question}")
-
-    if st.session_state.get('selected_question_text'):
-        st.markdown("---")
-        st.markdown(
-            f"**Выбранный вопрос:** №{st.session_state['selected_question_num']} - {st.session_state['selected_question_text']}")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📝 Вставить в следующее поле вопроса", use_container_width=True):
-                st.session_state['template_question'] = st.session_state['selected_question_text']
-                st.rerun()
-
-
-# -------------------------------
-# 4. ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ
+# ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ
 # -------------------------------
 @st.cache_data(ttl=60)
 def load_data_from_gsheet():
@@ -378,7 +360,74 @@ def create_demo_data():
 
 
 # -------------------------------
-# 5. ФУНКЦИЯ КОНВЕРТАЦИИ КООРДИНАТ
+# СОЗДАНИЕ КАРТЫ
+# -------------------------------
+def create_map(df, selected_question=None, selected_answer=None, show_isoglosses=True):
+    center_lat = 57.0
+    center_lon = 53.0
+
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles='OpenStreetMap')
+
+    # Добавляем изоглоссы
+    if show_isoglosses and selected_question and selected_question != "Все вопросы":
+        iso_manager = IsoglossManager()
+        m = iso_manager.add_isoglosses_to_map(m, df, selected_question)
+
+    # Добавляем маркеры
+    for idx, row in df.iterrows():
+        if pd.notna(row['latitude']) and pd.notna(row['longitude']):
+            settlement = row['settlement'] if 'settlement' in row.index else ''
+            settlement_type = row['settlement_type'] if 'settlement_type' in row.index and pd.notna(
+                row['settlement_type']) else ''
+            district = row['district'] if 'district' in row.index and pd.notna(row['district']) else ''
+            region = row['region'] if 'region' in row.index and pd.notna(row['region']) else ''
+
+            # Определяем цвет маркера
+            color = 'blue'
+            tooltip = settlement
+            popup_text = f"""
+                <b>{settlement}</b><br>
+                <i>{settlement_type}</i><br>
+                <b>Район:</b> {district}<br>
+                <b>Регион:</b> {region}<br>
+                <hr>
+            """
+
+            # Если выбран конкретный вопрос
+            if selected_question and selected_question != "Все вопросы":
+                answers = get_answer_for_question(row, selected_question)
+                if answers:
+                    tooltip += f" - {', '.join(answers)}"
+                    popup_text += f"<b>Вопрос:</b> {selected_question}<br>"
+                    popup_text += f"<b>Ответы:</b> {', '.join(answers)}<br>"
+                    # Определяем цвет по первому ответу или по выбранному
+                    if selected_answer and selected_answer in answers:
+                        color = get_color_for_answer(selected_answer)
+                    else:
+                        color = get_color_for_answer(answers[0])
+
+            # Добавляем все диалектные особенности
+            popup_text += "<hr><b>Все диалектные особенности:</b><br>"
+            for q_col in df.columns:
+                if q_col.startswith('question_') and pd.notna(row[q_col]):
+                    q_num = q_col.split('_')[1]
+                    a_col = f'answer_{q_num}'
+                    if a_col in df.columns and pd.notna(row[a_col]):
+                        answers = split_answers(row[a_col])
+                        popup_text += f"• {row[q_col]}: <b>{', '.join(answers)}</b><br>"
+
+            folium.Marker(
+                [row['latitude'], row['longitude']],
+                popup=folium.Popup(popup_text, max_width=300),
+                tooltip=tooltip,
+                icon=folium.Icon(color=color, icon='info-sign')
+            ).add_to(m)
+
+    return m
+
+
+# -------------------------------
+# ФУНКЦИЯ КОНВЕРТАЦИИ КООРДИНАТ
 # -------------------------------
 def convert_dms_to_decimal(dms_string):
     if not dms_string:
@@ -391,7 +440,6 @@ def convert_dms_to_decimal(dms_string):
         pass
 
     numbers = re.findall(r'(\d+(?:\.\d+)?)', dms_string)
-
     if not numbers:
         return None
 
@@ -414,7 +462,7 @@ def convert_dms_to_decimal(dms_string):
 
 
 # -------------------------------
-# 6. ФУНКЦИЯ ДЛЯ ДОБАВЛЕНИЯ В GOOGLE SHEETS
+# ФУНКЦИЯ ДЛЯ ДОБАВЛЕНИЯ В GOOGLE SHEETS
 # -------------------------------
 def add_to_google_sheets(data_dict):
     try:
@@ -462,14 +510,12 @@ def add_to_google_sheets(data_dict):
         def format_coordinate(value):
             if value is None or value == "":
                 return ""
-            value_str = str(value)
-            value_str = value_str.replace(',', '.')
+            value_str = str(value).replace(',', '.')
             try:
                 return str(float(value_str))
             except:
                 return value_str
 
-        # Формируем строку (без altitude)
         new_row = [
             new_id,
             data_dict.get('region', ''),
@@ -480,7 +526,6 @@ def add_to_google_sheets(data_dict):
             format_coordinate(data_dict.get('longitude', '')),
         ]
 
-        # Добавляем вопросы и ответы (до 5 вопросов)
         for q_num in range(1, 6):
             question = data_dict.get(f'question_{q_num}', '')
             answer = data_dict.get(f'answer_{q_num}', '')
@@ -495,88 +540,37 @@ def add_to_google_sheets(data_dict):
 
 
 # -------------------------------
-# 7. СОЗДАНИЕ КАРТЫ (с поддержкой множественных ответов)
+# ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ
 # -------------------------------
-def create_map(df, selected_question=None, selected_answer=None, show_isoglosses=True):
-    center_lat = 57.0
-    center_lon = 53.0
+def show_question_templates():
+    st.markdown("### 📋 Шаблоны вопросов из ДАРЯ")
+    st.info("Выберите вопрос из списка, чтобы автоматически вставить его в поля ниже")
 
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles='OpenStreetMap')
+    search_q = st.text_input("🔍 Поиск вопроса", placeholder="например: произношение, лексика, синтаксис...")
 
-    if show_isoglosses and selected_question and selected_question != "Все вопросы":
-        iso_manager = IsoglossManager()
-        m = iso_manager.add_isoglosses_to_map(m, df, selected_question)
+    filtered_questions = DARYA_QUESTIONS.items()
+    if search_q:
+        filtered_questions = [(num, q) for num, q in filtered_questions
+                              if search_q.lower() in q.lower()]
 
-    for idx, row in df.iterrows():
-        if pd.notna(row['latitude']) and pd.notna(row['longitude']):
-            settlement = row['settlement'] if 'settlement' in row.index else ''
-            settlement_type = row['settlement_type'] if 'settlement_type' in row.index and pd.notna(
-                row['settlement_type']) else ''
-            district = row['district'] if 'district' in row.index and pd.notna(row['district']) else ''
-            region = row['region'] if 'region' in row.index and pd.notna(row['region']) else ''
+    cols = st.columns(3)
+    for i, (num, question) in enumerate(filtered_questions):
+        with cols[i % 3]:
+            if st.button(f"📌 №{num}: {question[:40]}...", key=f"q_{num}"):
+                st.session_state['selected_question_num'] = num
+                st.session_state['selected_question_text'] = question
+                st.success(f"✅ Выбран вопрос: №{num} - {question}")
 
-            popup_text = f"""
-                <b>{settlement}</b><br>
-                <i>{settlement_type}</i><br>
-                <b>Район:</b> {district}<br>
-                <b>Регион:</b> {region}<br>
-                <hr>
-            """
+    if st.session_state.get('selected_question_text'):
+        st.markdown("---")
+        st.markdown(
+            f"**Выбранный вопрос:** №{st.session_state['selected_question_num']} - {st.session_state['selected_question_text']}")
 
-            # Определяем цвет маркера
-            color = 'blue'
-            if selected_question and selected_question != "Все вопросы":
-                # Ищем ответ на выбранный вопрос
-                for q_col in df.columns:
-                    if q_col.startswith('question_'):
-                        q_num = q_col.split('_')[1]
-                        a_col = f'answer_{q_num}'
-                        if a_col in df.columns and row[q_col] == selected_question and pd.notna(row[a_col]):
-                            answers = split_answers(row[a_col])
-                            if answers:
-                                popup_text += f"<b>Вопрос:</b> {selected_question}<br>"
-                                popup_text += f"<b>Ответы:</b> {', '.join(answers)}<br>"
-                                if selected_answer and selected_answer in answers:
-                                    color = get_color_for_answer(selected_answer, idx)
-                                else:
-                                    color = get_color_for_answer(answers[0], idx)
-                            break
-
-            # Добавляем все диалектные особенности
-            popup_text += "<hr><b>Все диалектные особенности:</b><br>"
-            for q_col in df.columns:
-                if q_col.startswith('question_') and pd.notna(row[q_col]):
-                    q_num = q_col.split('_')[1]
-                    a_col = f'answer_{q_num}'
-                    if a_col in df.columns and pd.notna(row[a_col]):
-                        answers = split_answers(row[a_col])
-                        popup_text += f"• {row[q_col]}: <b>{', '.join(answers)}</b><br>"
-
-            tooltip = f"{settlement}"
-            if selected_question and selected_question != "Все вопросы":
-                for q_col in df.columns:
-                    if q_col.startswith('question_'):
-                        q_num = q_col.split('_')[1]
-                        a_col = f'answer_{q_num}'
-                        if a_col in df.columns and row[q_col] == selected_question and pd.notna(row[a_col]):
-                            answers = split_answers(row[a_col])
-                            if answers:
-                                tooltip += f" - {', '.join(answers)}"
-                            break
-
-            folium.Marker(
-                [row['latitude'], row['longitude']],
-                popup=folium.Popup(popup_text, max_width=300),
-                tooltip=tooltip,
-                icon=folium.Icon(color=color, icon='info-sign')
-            ).add_to(m)
-
-    return m
+        if st.button("📝 Вставить в следующее поле вопроса", use_container_width=True):
+            st.session_state['template_question'] = st.session_state['selected_question_text']
+            st.rerun()
 
 
-# -------------------------------
-# 8. ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ
-# -------------------------------
 def show_editor_interface(df):
     st.markdown("## ✏️ Режим редактирования данных")
     st.markdown("---")
@@ -773,13 +767,9 @@ def show_editor_interface(df):
             if conv_lon is None:
                 st.error("❌ Не удалось распознать долготу")
 
-    st.markdown("---")
-    st.info(
-        "💡 **Совет:** Для указания нескольких ответов на один вопрос используйте точку с запятой (;). Например: `петух; кочет`")
-
 
 # -------------------------------
-# 9. ЗАГРУЗКА ДАННЫХ
+# ЗАГРУЗКА ДАННЫХ
 # -------------------------------
 with st.spinner('🔄 Загрузка данных из Google Sheets...'):
     df = load_data_from_gsheet()
@@ -789,7 +779,7 @@ if df.empty:
     st.stop()
 
 # -------------------------------
-# 10. БОКОВАЯ ПАНЕЛЬ
+# БОКОВАЯ ПАНЕЛЬ
 # -------------------------------
 with st.sidebar:
     st.markdown("## 🔍 Поиск и фильтры")
@@ -806,10 +796,12 @@ with st.sidebar:
 
     st.markdown("---")
 
+    # Поиск по населенному пункту
     search_settlement = st.text_input("🔎 Найти населенный пункт", placeholder="например: Русская Лоза")
 
     st.markdown("---")
 
+    # Поиск по диалектным особенностям
     st.markdown("## 🔬 Поиск по диалектным особенностям")
 
     search_linguistic = st.text_input(
@@ -818,15 +810,16 @@ with st.sidebar:
     )
 
     st.markdown("### Или выберите из списка:")
-    all_answers = get_all_unique_answers(df)
+    all_units = get_all_linguistic_units(df)
     selected_unit = st.selectbox(
         "📋 Лингвистические единицы",
-        [""] + all_answers,
+        [""] + all_units,
         format_func=lambda x: "Выберите..." if x == "" else x
     )
 
     st.markdown("---")
 
+    # Анализ по вопросам
     st.markdown("## 📋 Анализ по вопросам")
     questions_display = get_unique_questions(df)
     selected_question_display = st.selectbox("Выберите вопрос из программы ДАРЯ", ["Все вопросы"] + questions_display)
@@ -837,7 +830,7 @@ with st.sidebar:
         available_answers = []
     else:
         selected_question = get_original_question(selected_question_display)
-        available_answers = get_all_answers_for_question(df, selected_question)
+        available_answers = get_available_answers_for_question(df, selected_question)
 
     selected_answer = None
     if selected_question and selected_question != "Все вопросы" and available_answers:
@@ -847,108 +840,88 @@ with st.sidebar:
 
     st.markdown("---")
 
+    # Изоглоссы
     st.session_state['show_isoglosses'] = st.checkbox("🗺️ Показывать изоглоссы (ареалы распространения)",
                                                       value=st.session_state['show_isoglosses'])
 
     st.markdown("---")
 
+    # Фильтр по региону
     regions = ['Все регионы'] + sorted(df['region'].unique().tolist())
     selected_region = st.selectbox("📍 Регион", regions)
 
     st.markdown("---")
 
+    # Статистика
     st.markdown("## 📊 Статистика")
-    col1, col2 = st.columns(2)
-    with col1:
+    stat1, stat2 = st.columns(2)
+    with stat1:
         st.metric("Населенных пунктов", len(df))
         st.metric("Районов", df['district'].nunique() if 'district' in df.columns else 0)
-    with col2:
+    with stat2:
         st.metric("Регионов", df['region'].nunique() if 'region' in df.columns else 0)
         st.metric("Вопросов", len(get_unique_questions(df)))
 
     st.markdown("---")
 
+    # Инструкция
     with st.expander("📖 ПОЛНАЯ ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ", expanded=False):
         st.markdown("""
         ### 🗺️ РАБОТА С КАРТОЙ
-
-        **Основные действия:**
-        - **Кликните на любой маркер** - откроется окно со всей информацией
-        - **Приближайте/отдаляйте карту** - используйте колесико мыши или кнопки +/-
-        - **Перетаскивайте карту** - зажмите левую кнопку мыши
+        - **Кликните на маркер** - информация о населенном пункте
+        - **Приближайте/отдаляйте** - колесико мыши или кнопки +/-
 
         ### 🔍 ПОИСК И ФИЛЬТРАЦИЯ
-
-        **Поиск по населенному пункту:**
-        - Введите название в поле "Найти населенный пункт"
-
-        **Поиск по диалектным особенностям:**
-        - Введите ключевое слово или выберите из списка всех вариантов ответов
-
-        **Анализ по вопросам ДАРЯ:**
-        - Выберите вопрос (отображаются с номерами из ДАРЯ)
-        - Включите "Показывать изоглоссы" для отображения ареалов
+        - **Поиск по названию** - находит населенный пункт
+        - **Поиск по особенностям** - ищет по любым диалектным признакам
+        - **Анализ по вопросам** - выбирайте вопрос ДАРЯ и смотрите распределение
 
         ### 📌 МНОЖЕСТВЕННЫЕ ОТВЕТЫ
+        - В одном пункте может быть несколько ответов (через ;)
+        - При фильтрации по ответу такой пункт будет показан
+        - В изоглоссах пункт учитывается для каждого варианта
 
-        В одном населенном пункте могут быть зафиксированы разные варианты ответа на один вопрос.
-
-        **Как это работает:**
-        - В таблице такие ответы записываются через точку с запятой: `изба; хата`
-        - На карте такой пункт отображается отдельным маркером
-        - При построении ареалов (изоглосс) пункт учитывается для **каждого** варианта ответа
-        - При фильтрации по конкретному ответу пункт **будет показан**, если выбранный ответ есть среди вариантов
-
-        ### ✏️ РЕЖИМ РЕДАКТИРОВАНИЯ
-
-        **Добавление пункта:**
-        1. Нажмите "✏️ Редактор"
-        2. Заполните поля: регион, район, название
-        3. Нажмите "🔍 Найти координаты автоматически"
-        4. Выберите вопросы из шаблонов ДАРЯ
-        5. Для указания нескольких ответов используйте точку с запятой (;)
-        6. Нажмите "✅ Добавить"
-
-        ### 🗺️ ИЗОГЛОССЫ (АРЕАЛЫ)
-
-        Что это такое? Изоглоссы - это линии на карте, показывающие границы распространения языковых явлений.
-
-        **Как использовать:**
-        1. Выберите вопрос из списка
-        2. Включите чекбокс "Показывать изоглоссы"
-        3. На карте появятся цветные области - ареалы распространения
-        4. Пункты с множественными ответами учитываются в ареалах для каждого варианта
+        ### ✏️ РЕДАКТИРОВАНИЕ
+        - Нажмите "✏️ Редактор" для добавления новых пунктов
+        - Координаты ищутся автоматически или вручную
+        - Несколько ответов пишите через точку с запятой (;)
         """)
 
 # -------------------------------
-# 11. ФИЛЬТРАЦИЯ ДАННЫХ
+# ФИЛЬТРАЦИЯ ДАННЫХ
 # -------------------------------
 filtered_df = df.copy()
 
+# Фильтр по региону
 if selected_region != "Все регионы" and 'region' in df.columns:
     filtered_df = filtered_df[filtered_df['region'] == selected_region]
 
+# Фильтр по населенному пункту
 if search_settlement and 'settlement' in df.columns:
     filtered_df = filtered_df[
         filtered_df['settlement'].str.contains(search_settlement, case=False, na=False)
     ]
 
+# Фильтр по лингвистическим единицам
 if search_linguistic:
-    filtered_df = search_by_linguistic_unit(filtered_df, search_linguistic)
+    filtered_df = filter_df_by_linguistic_unit(filtered_df, search_linguistic)
     if len(filtered_df) > 0:
         st.sidebar.success(f"🔍 Найдено пунктов: {len(filtered_df)}")
     else:
         st.sidebar.warning("🔍 Ничего не найдено")
 
 if selected_unit:
-    filtered_df = search_by_linguistic_unit(filtered_df, selected_unit)
+    filtered_df = filter_df_by_linguistic_unit(filtered_df, selected_unit)
     st.sidebar.info(f"📌 Пунктов с '{selected_unit}': {len(filtered_df)}")
 
-if selected_question and selected_question != "Все вопросы" and selected_answer:
-    filtered_df = filter_by_question_and_answer(filtered_df, selected_question, selected_answer)
+# Фильтр по вопросу и ответу
+if selected_question and selected_question != "Все вопросы":
+    filtered_df = filter_df_by_question_and_answer(filtered_df, selected_question, selected_answer)
+    if len(filtered_df) == 0:
+        st.sidebar.warning("⚠️ Нет населенных пунктов с таким ответом на выбранный вопрос")
 
 # -------------------------------
-# 12. ОСНОВНОЙ ИНТЕРФЕЙС
+# ОСНОВНОЙ ИНТЕРФЕЙС
 # -------------------------------
 if st.session_state['edit_mode']:
     show_editor_interface(df)
@@ -982,17 +955,16 @@ else:
                 st.markdown(f"**Вопрос:** *{selected_question}*")
             st.markdown("---")
 
-            answers = get_all_answers_for_question(df, selected_question)
-            for i, answer in enumerate(answers):
-                color = get_color_for_answer(answer, i)
+            answers = get_available_answers_for_question(df, selected_question)
+            for answer in answers:
+                color = get_color_for_answer(answer)
                 st.markdown(f"<span style='color: {color}; font-size: 20px;'>●</span> {answer}", unsafe_allow_html=True)
 
             if st.session_state['show_isoglosses']:
                 st.markdown("---")
                 st.markdown("**🗺️ Изоглоссы (ареалы):**")
                 st.markdown("Цветные области показывают границы распространения")
-                st.info(
-                    "ℹ️ **Примечание:** В населенных пунктах, где зафиксировано несколько варианта ответа (например, 'изба; хата'), они учитываются при построении ареалов для каждого варианта, но сам пункт отображается отдельным маркером")
+                st.info("ℹ️ Пункты с несколькими ответами учитываются в ареалах для каждого варианта")
         else:
             st.markdown("""
             **Цвета маркеров по умолчанию:**
@@ -1004,16 +976,10 @@ else:
             | 🟠 Оранжевый | твердое [ца] |
             | 🟣 Фиолетовый | мягкое [ц'а] |
             | 🔵 Синий | стандартные окончания |
-
-            ---
-            ℹ️ **Примечание о множественных ответах:**
-            - В населенных пунктах может быть несколько вариантов ответа (разделены ;)
-            - Такие пункты учитываются в ареалах для каждого варианта ответа
-            - При фильтрации по ответу такие пункты также отображаются
             """)
 
 # -------------------------------
-# 13. ТАБЛИЦА С ДАННЫМИ
+# ТАБЛИЦА С ДАННЫМИ
 # -------------------------------
 st.markdown("---")
 st.markdown("## 📋 Данные населенных пунктов")
@@ -1036,9 +1002,9 @@ st.dataframe(
 )
 
 # -------------------------------
-# 14. КНОПКИ ЭКСПОРТА
+# КНОПКИ ЭКСПОРТА
 # -------------------------------
-col1, col2, col3 = st.columns([1, 1, 2])
+col1, col2 = st.columns(2)
 with col1:
     if st.button("📥 Экспорт в CSV", use_container_width=True):
         csv = filtered_df.to_csv(index=False, encoding='utf-8-sig')
@@ -1055,7 +1021,7 @@ with col2:
         st.rerun()
 
 # -------------------------------
-# 15. ПОДВАЛ
+# ПОДВАЛ
 # -------------------------------
 st.markdown("---")
 st.markdown(
@@ -1064,10 +1030,7 @@ st.markdown(
         <b>📊 Источник данных:</b> Google Sheets (программа ДАРЯ/ЛАРНГ)<br>
         <b>🔄 Автообновление:</b> данные обновляются каждые 60 секунд<br>
         <b>🗺️ Изоглоссы:</b> показывают границы распространения диалектных явлений<br>
-        <b>🔍 Поиск по лемме:</b> работает по всем диалектным особенностям<br>
-        <b>📝 Номера вопросов:</b> соответствуют программе ДАРЯ<br>
         <b>📌 Множественные ответы:</b> для одного вопроса можно указать несколько ответов через точку с запятой (;)<br>
-        <b>📌 Фильтрация:</b> при фильтрации по ответу показываются пункты, где этот ответ присутствует среди всех вариантов<br>
         <hr>
         © Диалектологическая карта Удмуртии | Проект выполнен в рамках изучения русских говоров
     </div>
