@@ -103,7 +103,7 @@ def get_available_answers_for_question(df, question):
 
 
 # -------------------------------
-# ФУНКЦИИ ФИЛЬТРАЦИИ (ИСПРАВЛЕННЫЕ - используем .loc)
+# ФУНКЦИИ ФИЛЬТРАЦИИ
 # -------------------------------
 def filter_df_by_question(df, question):
     """Фильтрует DataFrame по наличию ответа на вопрос"""
@@ -159,7 +159,12 @@ def get_all_linguistic_units(df):
 # -------------------------------
 # ВИЗУАЛИЗАЦИЯ
 # -------------------------------
-def get_color_for_answer(answer):
+def get_color_for_answer(answer, is_multiple=False):
+    """Определяет цвет для варианта ответа"""
+    # Если это пункт с множественными ответами, возвращаем специальный цвет
+    if is_multiple:
+        return 'purple'
+
     colors_map = {
         '[ɡ] взрывной': 'red',
         '[ɣ] фрикативный': 'green',
@@ -199,7 +204,7 @@ class IsoglossManager:
                     hull = ConvexHull(points_array)
                     hull_points = [points[i] for i in hull.vertices]
                     hull_points.append(hull_points[0])
-                    color = get_color_for_answer(answer)
+                    color = get_color_for_answer(answer, is_multiple=False)
                     folium.Polygon(
                         locations=hull_points,
                         popup=f"Ареал: {answer}",
@@ -235,6 +240,7 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
 
         color = 'blue'
         answers_str = ""
+        is_multiple = False
         popup_html = f"""
             <b>{settlement}</b><br>
             <i>{settlement_type}</i><br>
@@ -252,11 +258,17 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
             popup_html += f"<b>Вопрос:</b> {selected_question}<br>"
             popup_html += f"<b>Ответы:</b> {', '.join(answers)}<br>"
 
-            # Выбор цвета: если выбран конкретный ответ, и он есть в списке — берем его цвет
-            if selected_answer and selected_answer in answers:
-                color = get_color_for_answer(selected_answer)
+            # Проверяем, есть ли несколько ответов
+            is_multiple = len(answers) > 1
+
+            # Выбор цвета
+            if is_multiple:
+                # Если несколько ответов - используем специальный цвет
+                color = 'purple'
+            elif selected_answer and selected_answer in answers:
+                color = get_color_for_answer(selected_answer, is_multiple=False)
             else:
-                color = get_color_for_answer(answers[0])
+                color = get_color_for_answer(answers[0], is_multiple=False)
 
         # Добавляем все диалектные особенности
         popup_html += "<hr><b>Все диалектные особенности:</b><br>"
@@ -265,12 +277,20 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
                 q_val = row[q_col]
                 ans_list = get_answer_for_question(row, q_val)
                 if ans_list:
-                    popup_html += f"• {q_val}: <b>{', '.join(ans_list)}</b><br>"
+                    if len(ans_list) > 1:
+                        popup_html += f"• {q_val}: <b>{', '.join(ans_list)}</b> 🔸<br>"
+                    else:
+                        popup_html += f"• {q_val}: <b>{', '.join(ans_list)}</b><br>"
+
+        # Добавляем иконку в тултип для множественных ответов
+        tooltip_text = f"{settlement}{answers_str}"
+        if is_multiple:
+            tooltip_text += " 🔸 (несколько вариантов)"
 
         folium.Marker(
             [row['latitude'], row['longitude']],
             popup=folium.Popup(popup_html, max_width=300),
-            tooltip=f"{settlement}{answers_str}",
+            tooltip=tooltip_text,
             icon=folium.Icon(color=color, icon='info-sign')
         ).add_to(m)
 
@@ -805,7 +825,8 @@ with st.sidebar:
 
         ### 📌 МНОЖЕСТВЕННЫЕ ОТВЕТЫ
         - В одном пункте может быть несколько ответов (через ;)
-        - При фильтрации по ответу такой пункт будет показан
+        - **Фиолетовый маркер** 🔸 означает, что в пункте зафиксировано несколько вариантов ответа на выбранный вопрос
+        - При фильтрации по конкретному ответу такие пункты также отображаются
         - В изоглоссах пункт учитывается для каждого варианта
 
         ### ✏️ РЕДАКТИРОВАНИЕ
@@ -884,8 +905,14 @@ else:
 
             answers = get_available_answers_for_question(df, selected_question)
             for answer in answers:
-                color = get_color_for_answer(answer)
+                color = get_color_for_answer(answer, is_multiple=False)
                 st.markdown(f"<span style='color: {color}; font-size: 20px;'>●</span> {answer}", unsafe_allow_html=True)
+
+            # Добавляем пояснение для множественных ответов
+            st.markdown("---")
+            st.markdown(
+                f"<span style='color: purple; font-size: 20px;'>●</span> **Несколько вариантов ответа** (зафиксировано 2+ варианта)",
+                unsafe_allow_html=True)
 
             if st.session_state['show_isoglosses']:
                 st.markdown("---")
@@ -903,6 +930,9 @@ else:
             | 🟠 Оранжевый | твердое [ца] |
             | 🟣 Фиолетовый | мягкое [ц'а] |
             | 🔵 Синий | стандартные окончания |
+
+            ---
+            ℹ️ **При выборе вопроса:** пункты с несколькими ответами отображаются фиолетовым цветом
             """)
 
 # -------------------------------
@@ -958,6 +988,7 @@ st.markdown(
         <b>🔄 Автообновление:</b> данные обновляются каждые 60 секунд<br>
         <b>🗺️ Изоглоссы:</b> показывают границы распространения диалектных явлений<br>
         <b>📌 Множественные ответы:</b> для одного вопроса можно указать несколько ответов через точку с запятой (;)<br>
+        <b>🔸 Фиолетовый маркер:</b> в пункте зафиксировано несколько вариантов ответа на выбранный вопрос<br>
         <hr>
         © Диалектологическая карта Удмуртии | Проект выполнен в рамках изучения русских говоров
     </div>
