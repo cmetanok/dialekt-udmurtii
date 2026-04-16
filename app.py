@@ -22,27 +22,21 @@ st.set_page_config(
     layout="wide"
 )
 
-# Инициализация session state
-if 'edit_mode' not in st.session_state:
-    st.session_state['edit_mode'] = False
-if 'new_lat' not in st.session_state:
-    st.session_state['new_lat'] = 57.0
-if 'new_lon' not in st.session_state:
-    st.session_state['new_lon'] = 53.0
-if 'show_isoglosses' not in st.session_state:
-    st.session_state['show_isoglosses'] = True
-if 'show_templates' not in st.session_state:
-    st.session_state['show_templates'] = False
-if 'selected_question_num' not in st.session_state:
-    st.session_state['selected_question_num'] = None
-if 'selected_question_text' not in st.session_state:
-    st.session_state['selected_question_text'] = None
-if 'template_question' not in st.session_state:
-    st.session_state['template_question'] = None
-if 'auto_lat' not in st.session_state:
-    st.session_state['auto_lat'] = 57.0
-if 'auto_lon' not in st.session_state:
-    st.session_state['auto_lon'] = 53.0
+# Инициализация session_state
+for key, default in {
+    'edit_mode': False,
+    'new_lat': 57.0,
+    'new_lon': 53.0,
+    'show_isoglosses': True,
+    'show_templates': False,
+    'selected_question_num': None,
+    'selected_question_text': None,
+    'template_question': None,
+    'auto_lat': 57.0,
+    'auto_lon': 53.0
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 # Заголовок
 st.markdown("""
@@ -57,11 +51,11 @@ st.markdown("""
 
 
 # -------------------------------
-# ФУНКЦИИ ДЛЯ РАБОТЫ С МНОЖЕСТВЕННЫМИ ОТВЕТАМИ
+# ФУНКЦИИ ОБРАБОТКИ ДАННЫХ
 # -------------------------------
 def split_answers(answer_str):
     """Разделяет строку с ответами на список (разделитель ;)"""
-    if pd.isna(answer_str) or answer_str is None or answer_str == "":
+    if pd.isna(answer_str) or answer_str is None or str(answer_str).strip() == "":
         return []
     parts = re.split(r';\s*', str(answer_str))
     return [p.strip() for p in parts if p.strip()]
@@ -78,38 +72,8 @@ def get_answer_for_question(row, question):
     return []
 
 
-def get_all_questions_with_answers(df):
-    """Получает все вопросы и соответствующие им ответы"""
-    questions_dict = {}
-    for idx, row in df.iterrows():
-        for col in df.columns:
-            if col.startswith('question_') and pd.notna(row[col]):
-                q = row[col]
-                q_num = col.split('_')[1]
-                a_col = f'answer_{q_num}'
-                if a_col in df.columns and pd.notna(row[a_col]):
-                    if q not in questions_dict:
-                        questions_dict[q] = set()
-                    for ans in split_answers(row[a_col]):
-                        questions_dict[q].add(ans)
-    return questions_dict
-
-
-def get_settlements_for_question_answer(df, question, answer):
-    """Получает список населенных пунктов, где есть конкретный ответ на вопрос"""
-    settlements = []
-    for idx, row in df.iterrows():
-        answers = get_answer_for_question(row, question)
-        if answer in answers:
-            settlements.append(idx)
-    return settlements
-
-
-# -------------------------------
-# ФУНКЦИИ ДЛЯ ФИЛЬТРАЦИИ
-# -------------------------------
 def get_unique_questions(df):
-    """Получает список всех вопросов из таблицы с номерами ДАРЯ"""
+    """Получает список всех вопросов из таблицы"""
     questions = set()
     for col in df.columns:
         if col.startswith('question_'):
@@ -122,21 +86,33 @@ def get_unique_questions(df):
 
 
 def get_original_question(display_question):
-    if display_question.startswith("[№"):
+    if display_question and display_question.startswith("[№"):
         return display_question.split("] ", 1)[1]
     return display_question
 
 
+def get_available_answers_for_question(df, question):
+    """Получает все варианты ответов для конкретного вопроса"""
+    if not question or question == "Все вопросы":
+        return []
+    answers = set()
+    for _, row in df.iterrows():
+        for ans in get_answer_for_question(row, question):
+            answers.add(ans)
+    return sorted(list(answers))
+
+
+# -------------------------------
+# ФУНКЦИИ ФИЛЬТРАЦИИ (ИСПРАВЛЕННЫЕ - используем .loc)
+# -------------------------------
 def filter_df_by_question(df, question):
-    """Фильтрует DataFrame по наличию вопроса"""
+    """Фильтрует DataFrame по наличию ответа на вопрос"""
     if not question or question == "Все вопросы":
         return df
-
     mask = pd.Series(False, index=df.index)
     for idx, row in df.iterrows():
-        answers = get_answer_for_question(row, question)
-        if answers:  # Если есть ответы на этот вопрос
-            mask.iloc[idx] = True
+        if get_answer_for_question(row, question):
+            mask.loc[idx] = True
     return df[mask]
 
 
@@ -149,7 +125,7 @@ def filter_df_by_question_and_answer(df, question, answer):
     for idx, row in df.iterrows():
         answers = get_answer_for_question(row, question)
         if answer in answers:
-            mask.iloc[idx] = True
+            mask.loc[idx] = True
     return df[mask]
 
 
@@ -157,20 +133,15 @@ def filter_df_by_linguistic_unit(df, search_term):
     """Фильтрует по поиску в ответах"""
     if not search_term:
         return df
-
     search_term_lower = search_term.lower().strip()
     mask = pd.Series(False, index=df.index)
-
     for idx, row in df.iterrows():
         for col in df.columns:
             if col.startswith('answer_') and pd.notna(row[col]):
                 answers = split_answers(row[col])
-                for ans in answers:
-                    if search_term_lower in ans.lower():
-                        mask.iloc[idx] = True
-                        break
-            if mask.iloc[idx]:
-                break
+                if any(search_term_lower in ans.lower() for ans in answers):
+                    mask.loc[idx] = True
+                    break
     return df[mask]
 
 
@@ -185,102 +156,160 @@ def get_all_linguistic_units(df):
     return sorted(list(units))
 
 
-def get_available_answers_for_question(df, question):
-    """Получает все возможные ответы для вопроса (для выпадающего списка)"""
-    if not question or question == "Все вопросы":
-        return []
-    answers = set()
-    for idx, row in df.iterrows():
-        for ans in get_answer_for_question(row, question):
-            answers.add(ans)
-    return sorted(list(answers))
-
-
+# -------------------------------
+# ВИЗУАЛИЗАЦИЯ
+# -------------------------------
 def get_color_for_answer(answer):
-    """Определяет цвет для ответа"""
-    colors = {
+    colors_map = {
         '[ɡ] взрывной': 'red',
         '[ɣ] фрикативный': 'green',
         'твердое [ца]': 'orange',
         'мягкое [ц\'а]': 'purple',
-        '-ут': 'blue',
-        '-ат/-ят': 'darkblue',
         'изба': 'lightgreen',
         'хата': 'lightred',
+        '-ут': 'blue',
+        '-ат/-ят': 'darkblue',
         'у меня есть': 'cadetblue',
         'у мене є': 'pink',
     }
-    if answer in colors:
-        return colors[answer]
-    # Если нет в словаре, используем хеш для стабильного цвета
-    color_list = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
-    hash_val = hash(str(answer)) % len(color_list)
-    return color_list[hash_val]
+    if answer in colors_map:
+        return colors_map[answer]
+    color_list = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'cadetblue']
+    return color_list[hash(str(answer)) % len(color_list)]
 
 
-# -------------------------------
-# КЛАСС ДЛЯ УПРАВЛЕНИЯ ИЗОГЛОССАМИ
-# -------------------------------
 class IsoglossManager:
-    def __init__(self):
-        pass
-
-    def get_points_for_answer(self, df, question, answer):
-        """Получает все точки для определенного вопроса и варианта ответа"""
-        points = []
-        for idx, row in df.iterrows():
-            answers = get_answer_for_question(row, question)
-            if answer in answers:
-                if pd.notna(row['latitude']) and pd.notna(row['longitude']):
-                    points.append([row['latitude'], row['longitude']])
-        return points
-
-    def create_convex_hull(self, points):
-        if len(points) < 3:
-            return None
-        points_array = np.array(points)
-        try:
-            hull = ConvexHull(points_array)
-            hull_points = points_array[hull.vertices].tolist()
-            hull_points.append(hull_points[0])
-            return hull_points
-        except:
-            return None
-
     def add_isoglosses_to_map(self, m, df, selected_question):
+        """Добавляет изоглоссы на карту"""
         if not selected_question or selected_question == "Все вопросы":
             return m
 
         answers = get_available_answers_for_question(df, selected_question)
 
         for answer in answers:
-            points = self.get_points_for_answer(df, selected_question, answer)
-            hull_points = self.create_convex_hull(points)
+            points = []
+            for _, row in df.iterrows():
+                if answer in get_answer_for_question(row, selected_question):
+                    if pd.notna(row['latitude']) and pd.notna(row['longitude']):
+                        points.append([row['latitude'], row['longitude']])
 
-            if hull_points and len(hull_points) >= 3:
-                color = get_color_for_answer(answer)
-
-                folium.Polygon(
-                    locations=hull_points,
-                    popup=f"Ареал: {answer}",
-                    tooltip=f"Изоглосса: {answer}",
-                    color=color,
-                    weight=2,
-                    fill=True,
-                    fill_color=color,
-                    fill_opacity=0.2,
-                    dash_array='5, 5'
-                ).add_to(m)
-
-                folium.PolyLine(
-                    locations=hull_points,
-                    color=color,
-                    weight=3,
-                    opacity=0.9,
-                    dash_array='5, 5'
-                ).add_to(m)
-
+            if len(points) >= 3:
+                try:
+                    points_array = np.array(points)
+                    hull = ConvexHull(points_array)
+                    hull_points = [points[i] for i in hull.vertices]
+                    hull_points.append(hull_points[0])
+                    color = get_color_for_answer(answer)
+                    folium.Polygon(
+                        locations=hull_points,
+                        popup=f"Ареал: {answer}",
+                        color=color,
+                        weight=2,
+                        fill=True,
+                        fill_color=color,
+                        fill_opacity=0.15
+                    ).add_to(m)
+                except:
+                    pass
         return m
+
+
+def create_map(df, selected_question=None, selected_answer=None, show_isoglosses=True):
+    """Создает интерактивную карту"""
+    m = folium.Map(location=[57.0, 53.0], zoom_start=7, tiles='OpenStreetMap')
+
+    # Добавляем изоглоссы
+    if show_isoglosses and selected_question and selected_question != "Все вопросы":
+        m = IsoglossManager().add_isoglosses_to_map(m, df, selected_question)
+
+    # Добавляем маркеры
+    for _, row in df.iterrows():
+        if pd.isna(row['latitude']) or pd.isna(row['longitude']):
+            continue
+
+        settlement = row['settlement'] if 'settlement' in row.index else ''
+        settlement_type = row['settlement_type'] if 'settlement_type' in row.index and pd.notna(
+            row['settlement_type']) else ''
+        district = row['district'] if 'district' in row.index and pd.notna(row['district']) else ''
+        region = row['region'] if 'region' in row.index and pd.notna(row['region']) else ''
+
+        color = 'blue'
+        answers_str = ""
+        popup_html = f"""
+            <b>{settlement}</b><br>
+            <i>{settlement_type}</i><br>
+            <b>Район:</b> {district}<br>
+            <b>Регион:</b> {region}<br>
+            <hr>
+        """
+
+        if selected_question and selected_question != "Все вопросы":
+            answers = get_answer_for_question(row, selected_question)
+            if not answers:
+                continue  # Пропускаем пункты без ответа на выбранный вопрос
+
+            answers_str = f" — {', '.join(answers)}"
+            popup_html += f"<b>Вопрос:</b> {selected_question}<br>"
+            popup_html += f"<b>Ответы:</b> {', '.join(answers)}<br>"
+
+            # Выбор цвета: если выбран конкретный ответ, и он есть в списке — берем его цвет
+            if selected_answer and selected_answer in answers:
+                color = get_color_for_answer(selected_answer)
+            else:
+                color = get_color_for_answer(answers[0])
+
+        # Добавляем все диалектные особенности
+        popup_html += "<hr><b>Все диалектные особенности:</b><br>"
+        for q_col in df.columns:
+            if q_col.startswith('question_') and pd.notna(row[q_col]):
+                q_val = row[q_col]
+                ans_list = get_answer_for_question(row, q_val)
+                if ans_list:
+                    popup_html += f"• {q_val}: <b>{', '.join(ans_list)}</b><br>"
+
+        folium.Marker(
+            [row['latitude'], row['longitude']],
+            popup=folium.Popup(popup_html, max_width=300),
+            tooltip=f"{settlement}{answers_str}",
+            icon=folium.Icon(color=color, icon='info-sign')
+        ).add_to(m)
+
+    return m
+
+
+# -------------------------------
+# ФУНКЦИЯ КОНВЕРТАЦИИ КООРДИНАТ
+# -------------------------------
+def convert_dms_to_decimal(dms_string):
+    if not dms_string:
+        return None
+
+    try:
+        val = float(dms_string.replace(',', '.'))
+        return val
+    except:
+        pass
+
+    numbers = re.findall(r'(\d+(?:\.\d+)?)', dms_string)
+    if not numbers:
+        return None
+
+    numbers = [float(n) for n in numbers]
+
+    if len(numbers) == 1:
+        decimal = numbers[0]
+    elif len(numbers) == 2:
+        decimal = numbers[0] + numbers[1] / 60
+    else:
+        decimal = numbers[0] + numbers[1] / 60 + numbers[2] / 3600
+
+    is_south = 'ю.ш.' in dms_string or 'южн' in dms_string or 'S' in dms_string.upper()
+    is_west = 'з.д.' in dms_string or 'зап' in dms_string or 'W' in dms_string.upper()
+
+    if is_south or is_west:
+        decimal = -decimal
+
+    return round(decimal, 6)
 
 
 # -------------------------------
@@ -357,108 +386,6 @@ def create_demo_data():
         'answer_1': ['[ɡ] взрывной', '[ɣ] фрикативный', '[ɡ] взрывной'],
     }
     return pd.DataFrame(data)
-
-
-# -------------------------------
-# СОЗДАНИЕ КАРТЫ
-# -------------------------------
-def create_map(df, selected_question=None, selected_answer=None, show_isoglosses=True):
-    center_lat = 57.0
-    center_lon = 53.0
-
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles='OpenStreetMap')
-
-    # Добавляем изоглоссы
-    if show_isoglosses and selected_question and selected_question != "Все вопросы":
-        iso_manager = IsoglossManager()
-        m = iso_manager.add_isoglosses_to_map(m, df, selected_question)
-
-    # Добавляем маркеры
-    for idx, row in df.iterrows():
-        if pd.notna(row['latitude']) and pd.notna(row['longitude']):
-            settlement = row['settlement'] if 'settlement' in row.index else ''
-            settlement_type = row['settlement_type'] if 'settlement_type' in row.index and pd.notna(
-                row['settlement_type']) else ''
-            district = row['district'] if 'district' in row.index and pd.notna(row['district']) else ''
-            region = row['region'] if 'region' in row.index and pd.notna(row['region']) else ''
-
-            # Определяем цвет маркера
-            color = 'blue'
-            tooltip = settlement
-            popup_text = f"""
-                <b>{settlement}</b><br>
-                <i>{settlement_type}</i><br>
-                <b>Район:</b> {district}<br>
-                <b>Регион:</b> {region}<br>
-                <hr>
-            """
-
-            # Если выбран конкретный вопрос
-            if selected_question and selected_question != "Все вопросы":
-                answers = get_answer_for_question(row, selected_question)
-                if answers:
-                    tooltip += f" - {', '.join(answers)}"
-                    popup_text += f"<b>Вопрос:</b> {selected_question}<br>"
-                    popup_text += f"<b>Ответы:</b> {', '.join(answers)}<br>"
-                    # Определяем цвет по первому ответу или по выбранному
-                    if selected_answer and selected_answer in answers:
-                        color = get_color_for_answer(selected_answer)
-                    else:
-                        color = get_color_for_answer(answers[0])
-
-            # Добавляем все диалектные особенности
-            popup_text += "<hr><b>Все диалектные особенности:</b><br>"
-            for q_col in df.columns:
-                if q_col.startswith('question_') and pd.notna(row[q_col]):
-                    q_num = q_col.split('_')[1]
-                    a_col = f'answer_{q_num}'
-                    if a_col in df.columns and pd.notna(row[a_col]):
-                        answers = split_answers(row[a_col])
-                        popup_text += f"• {row[q_col]}: <b>{', '.join(answers)}</b><br>"
-
-            folium.Marker(
-                [row['latitude'], row['longitude']],
-                popup=folium.Popup(popup_text, max_width=300),
-                tooltip=tooltip,
-                icon=folium.Icon(color=color, icon='info-sign')
-            ).add_to(m)
-
-    return m
-
-
-# -------------------------------
-# ФУНКЦИЯ КОНВЕРТАЦИИ КООРДИНАТ
-# -------------------------------
-def convert_dms_to_decimal(dms_string):
-    if not dms_string:
-        return None
-
-    try:
-        val = float(dms_string.replace(',', '.'))
-        return val
-    except:
-        pass
-
-    numbers = re.findall(r'(\d+(?:\.\d+)?)', dms_string)
-    if not numbers:
-        return None
-
-    numbers = [float(n) for n in numbers]
-
-    if len(numbers) == 1:
-        decimal = numbers[0]
-    elif len(numbers) == 2:
-        decimal = numbers[0] + numbers[1] / 60
-    else:
-        decimal = numbers[0] + numbers[1] / 60 + numbers[2] / 3600
-
-    is_south = 'ю.ш.' in dms_string or 'южн' in dms_string or 'S' in dms_string.upper()
-    is_west = 'з.д.' in dms_string or 'зап' in dms_string or 'W' in dms_string.upper()
-
-    if is_south or is_west:
-        decimal = -decimal
-
-    return round(decimal, 6)
 
 
 # -------------------------------
