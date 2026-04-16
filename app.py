@@ -22,16 +22,10 @@ def process_coordinate_input(value):
     if value is None:
         return None
 
-    # Преобразуем в строку
     value_str = str(value).strip()
-
-    # Заменяем запятую на точку
     value_str = value_str.replace(',', '.')
-
-    # Удаляем пробелы
     value_str = value_str.replace(' ', '')
 
-    # Пробуем преобразовать в число
     try:
         return float(value_str)
     except ValueError:
@@ -86,28 +80,47 @@ st.markdown("""
 # -------------------------------
 class IsoglossManager:
     def __init__(self):
-        """Управление изоглоссами на карте"""
         pass
 
-    def get_points_for_question(self, df, question, answer):
-        """Получает все точки для определенного вопроса и ответа"""
+    def get_all_answers_for_question(self, df, question):
+        """Получает все варианты ответов для вопроса (из всех колонок answer_Xa, answer_Xb и т.д.)"""
+        answers = set()
+        # Ищем все колонки, которые относятся к этому вопросу
+        for col in df.columns:
+            if col.startswith(f'answer_') and df[col].notna().any():
+                # Проверяем, относится ли эта колонка ответов к нашему вопросу
+                # Номер вопроса из колонки ответа
+                parts = col.split('_')
+                if len(parts) >= 2:
+                    q_num = parts[1][0] if len(parts[1]) > 0 else None
+                    if q_num:
+                        q_col = f'question_{q_num}'
+                        if q_col in df.columns:
+                            mask = df[q_col] == question
+                            if mask.any():
+                                answers.update(df.loc[mask, col].dropna().unique())
+        return list(answers)
+
+    def get_points_for_answer(self, df, question, answer):
+        """Получает все точки для определенного вопроса и варианта ответа"""
         points = []
-        for q_col in [c for c in df.columns if c.startswith('question_')]:
-            mask = (df[q_col] == question)
-            if mask.any():
-                ans_col = q_col.replace('question_', 'answer_')
-                if ans_col in df.columns:
-                    answer_mask = (df[ans_col] == answer) if answer else mask
-                    mask = mask & answer_mask
 
-            for idx, row in df[mask].iterrows():
-                if pd.notna(row['latitude']) and pd.notna(row['longitude']):
-                    points.append([row['latitude'], row['longitude']])
-
+        # Ищем все колонки ответов для этого вопроса
+        for col in df.columns:
+            if col.startswith(f'answer_') and df[col].notna().any():
+                parts = col.split('_')
+                if len(parts) >= 2:
+                    q_num = parts[1][0] if len(parts[1]) > 0 else None
+                    if q_num:
+                        q_col = f'question_{q_num}'
+                        if q_col in df.columns:
+                            mask = (df[q_col] == question) & (df[col] == answer)
+                            for idx, row in df[mask].iterrows():
+                                if pd.notna(row['latitude']) and pd.notna(row['longitude']):
+                                    points.append([row['latitude'], row['longitude']])
         return points
 
     def create_convex_hull(self, points):
-        """Создает выпуклую оболочку для набора точек"""
         if len(points) < 3:
             return None
 
@@ -121,22 +134,14 @@ class IsoglossManager:
             return None
 
     def add_isoglosses_to_map(self, m, df, selected_question):
-        """Добавляет изоглоссы на карту для выбранного вопроса"""
         if not selected_question or selected_question == "Все вопросы":
             return m
 
-        answers = set()
-        for q_col in [c for c in df.columns if c.startswith('question_')]:
-            mask = df[q_col] == selected_question
-            if mask.any():
-                ans_col = q_col.replace('question_', 'answer_')
-                if ans_col in df.columns:
-                    answers.update(df.loc[mask, ans_col].dropna().unique())
-
+        answers = self.get_all_answers_for_question(df, selected_question)
         colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'darkred', 'darkblue']
 
         for i, answer in enumerate(answers):
-            points = self.get_points_for_question(df, selected_question, answer)
+            points = self.get_points_for_answer(df, selected_question, answer)
             hull_points = self.create_convex_hull(points)
 
             if hull_points and len(hull_points) >= 3:
@@ -166,7 +171,7 @@ class IsoglossManager:
 
 
 # -------------------------------
-# 3. ФУНКЦИИ ДЛЯ РАБОТЫ С ВОПРОСАМИ
+# 3. ФУНКЦИИ ДЛЯ РАБОТЫ С ВОПРОСАМИ (с поддержкой множественных ответов)
 # -------------------------------
 def get_unique_questions(df):
     """Получает список всех вопросов из таблицы с номерами ДАРЯ"""
@@ -182,14 +187,57 @@ def get_unique_questions(df):
 
 
 def get_original_question(display_question):
-    """Извлекает оригинальный вопрос из отображаемого с номером"""
     if display_question.startswith("[№"):
         return display_question.split("] ", 1)[1]
     return display_question
 
 
+def get_all_answers_for_question_from_df(df, question):
+    """Получает все уникальные варианты ответов для вопроса (из всех колонок)"""
+    answers = set()
+    for col in df.columns:
+        if col.startswith('answer_') and df[col].notna().any():
+            parts = col.split('_')
+            if len(parts) >= 2:
+                q_num = parts[1][0] if len(parts[1]) > 0 else None
+                if q_num:
+                    q_col = f'question_{q_num}'
+                    if q_col in df.columns:
+                        mask = df[q_col] == question
+                        if mask.any():
+                            for answer in df.loc[mask, col].dropna().unique():
+                                answers.add(str(answer))
+    return sorted(list(answers))
+
+
+def filter_by_question_and_answer(df, question, answer):
+    """Фильтрует данные по вопросу и конкретному варианту ответа"""
+    if not question or question == "Все вопросы" or not answer or answer == "Все ответы":
+        return df
+
+    mask = pd.Series(False, index=df.index)
+    for col in df.columns:
+        if col.startswith('answer_') and df[col].notna().any():
+            parts = col.split('_')
+            if len(parts) >= 2:
+                q_num = parts[1][0] if len(parts[1]) > 0 else None
+                if q_num:
+                    q_col = f'question_{q_num}'
+                    if q_col in df.columns:
+                        q_mask = (df[q_col] == question) & (df[col] == answer)
+                        mask = mask | q_mask
+    return df[mask]
+
+
+def get_color_for_answer_variant(question, answer, idx):
+    """Определяет цвет маркера для варианта ответа"""
+    colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'darkred', 'darkblue']
+    # Используем хеш для стабильного цвета
+    hash_val = hash(str(question) + str(answer)) % len(colors)
+    return colors[hash_val]
+
+
 def show_question_templates():
-    """Показывает интерфейс для выбора шаблонов вопросов из ДАРЯ"""
     st.markdown("### 📋 Шаблоны вопросов из ДАРЯ")
     st.info("Выберите вопрос из списка, чтобы автоматически вставить его в поля ниже")
 
@@ -291,38 +339,22 @@ def create_demo_data():
         'latitude': [56.8165, 57.5269, 58.5589],
         'longitude': [53.3895, 53.0247, 50.3395],
         'question_1': ['Фонетика: произношение [г]', 'Фонетика: произношение [г]', 'Фонетика: произношение [г]'],
-        'answer_1': ['[ɡ] взрывной', '[ɣ] фрикативный', '[ɡ] взрывной'],
+        'answer_1a': ['[ɡ] взрывной', '[ɣ] фрикативный', '[ɡ] взрывной'],
     }
     return pd.DataFrame(data)
 
 
 # -------------------------------
-# 5. ФУНКЦИИ ДЛЯ РАБОТЫ С ДАННЫМИ
+# 5. ФУНКЦИИ ДЛЯ РАБОТЫ С ДАННЫМИ (обновленные)
 # -------------------------------
-def get_answers_for_question(df, question):
-    answers = set()
-    for q_col in [c for c in df.columns if c.startswith('question_')]:
-        mask = df[q_col] == question
-        if mask.any():
-            ans_col = q_col.replace('question_', 'answer_')
-            if ans_col in df.columns:
-                answers.update(df.loc[mask, ans_col].dropna().unique())
-    return sorted(list(answers))
-
-
-def filter_by_question(df, question, answer=None):
-    if not question or question == "Все вопросы":
-        return df
-
-    mask = pd.Series(False, index=df.index)
-    for q_col in [c for c in df.columns if c.startswith('question_')]:
-        q_mask = df[q_col] == question
-        if answer and answer != "Все ответы":
-            ans_col = q_col.replace('question_', 'answer_')
-            if ans_col in df.columns:
-                q_mask = q_mask & (df[ans_col] == answer)
-        mask = mask | q_mask
-    return df[mask]
+def get_unique_linguistic_units(df):
+    """Получает список всех уникальных лингвистических единиц (ответов)"""
+    units = set()
+    for col in df.columns:
+        if col.startswith('answer_'):
+            for value in df[col].dropna().unique():
+                units.add(str(value))
+    return sorted(list(units))
 
 
 def search_by_linguistic_unit(df, search_term):
@@ -340,47 +372,19 @@ def search_by_linguistic_unit(df, search_term):
     return df[mask]
 
 
-def get_unique_linguistic_units(df):
-    units = set()
-    for col in df.columns:
-        if col.startswith('answer_'):
-            for value in df[col].dropna().unique():
-                units.add(str(value))
-    return sorted(list(units))
-
-
-def get_color_for_answer(question, answer):
-    color_map = {
-        '[ɡ] взрывной': 'red',
-        '[ɣ] фрикативный': 'green',
-        'твердое [ца]': 'orange',
-        'мягкое [ц\'а]': 'purple',
-        '-ут': 'blue',
-        '-ат/-ят': 'darkblue',
-        'изба': 'lightgreen',
-        'хата': 'lightred',
-        'у меня есть': 'cadetblue',
-        'у мене є': 'pink',
-    }
-    return color_map.get(str(answer), 'gray')
-
-
 # -------------------------------
 # 6. ФУНКЦИЯ КОНВЕРТАЦИИ КООРДИНАТ
 # -------------------------------
 def convert_dms_to_decimal(dms_string):
-    """Конвертирует строку с градусами в десятичные градусы"""
     if not dms_string:
         return None
 
-    # Проверяем, может уже десятичные
     try:
         val = float(dms_string.replace(',', '.'))
         return val
     except:
         pass
 
-    # Извлекаем числовые значения
     numbers = re.findall(r'(\d+(?:\.\d+)?)', dms_string)
 
     if not numbers:
@@ -388,7 +392,6 @@ def convert_dms_to_decimal(dms_string):
 
     numbers = [float(n) for n in numbers]
 
-    # Определяем формат
     if len(numbers) == 1:
         decimal = numbers[0]
     elif len(numbers) == 2:
@@ -396,7 +399,6 @@ def convert_dms_to_decimal(dms_string):
     else:
         decimal = numbers[0] + numbers[1] / 60 + numbers[2] / 3600
 
-    # Определяем направление
     is_south = 'ю.ш.' in dms_string or 'южн' in dms_string or 'S' in dms_string.upper()
     is_west = 'з.д.' in dms_string or 'зап' in dms_string or 'W' in dms_string.upper()
 
@@ -407,10 +409,9 @@ def convert_dms_to_decimal(dms_string):
 
 
 # -------------------------------
-# 7. ФУНКЦИЯ ДЛЯ ДОБАВЛЕНИЯ В GOOGLE SHEETS
+# 7. ФУНКЦИЯ ДЛЯ ДОБАВЛЕНИЯ В GOOGLE SHEETS (с поддержкой множественных ответов)
 # -------------------------------
 def add_to_google_sheets(data_dict):
-    """Добавляет новую запись в Google Sheets"""
     try:
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
@@ -453,41 +454,36 @@ def add_to_google_sheets(data_dict):
         else:
             new_id = 1
 
-        # Функция для форматирования координат (замена запятой на точку)
         def format_coordinate(value):
             if value is None or value == "":
                 return ""
-            # Преобразуем в строку
             value_str = str(value)
-            # Заменяем запятую на точку
             value_str = value_str.replace(',', '.')
-            # Пробуем преобразовать в число и обратно для чистоты формата
             try:
                 return str(float(value_str))
             except:
                 return value_str
 
-        # Формируем новую строку с правильным форматированием координат
+        # Формируем строку с поддержкой множественных ответов
         new_row = [
-            new_id,  # id
-            data_dict.get('region', ''),  # region
-            data_dict.get('district', ''),  # district
-            data_dict.get('settlement', ''),  # settlement
-            data_dict.get('type', ''),  # settlement_type
-            format_coordinate(data_dict.get('latitude', '')),  # latitude (с точкой!)
-            format_coordinate(data_dict.get('longitude', '')),  # longitude (с точкой!)
-            data_dict.get('altitude', ''),  # altitude
-            data_dict.get('question_1', ''),  # question_1
-            data_dict.get('answer_1', ''),  # answer_1
-            data_dict.get('question_2', ''),  # question_2
-            data_dict.get('answer_2', ''),  # answer_2
-            data_dict.get('question_3', ''),  # question_3
-            data_dict.get('answer_3', ''),  # answer_3
-            data_dict.get('question_4', ''),  # question_4
-            data_dict.get('answer_4', ''),  # answer_4
-            data_dict.get('question_5', ''),  # question_5
-            data_dict.get('answer_5', ''),  # answer_5
+            new_id,
+            data_dict.get('region', ''),
+            data_dict.get('district', ''),
+            data_dict.get('settlement', ''),
+            data_dict.get('type', ''),
+            format_coordinate(data_dict.get('latitude', '')),
+            format_coordinate(data_dict.get('longitude', '')),
+            data_dict.get('altitude', ''),
         ]
+
+        # Добавляем вопросы и ответы (до 5 вопросов, у каждого до 3 вариантов ответов)
+        for q_num in range(1, 6):
+            question = data_dict.get(f'question_{q_num}', '')
+            new_row.append(question)
+            # Добавляем варианты ответов для этого вопроса
+            for variant_num in ['a', 'b', 'c']:
+                answer = data_dict.get(f'answer_{q_num}{variant_num}', '')
+                new_row.append(answer)
 
         worksheet.append_row(new_row)
         return True, new_id
@@ -497,7 +493,7 @@ def add_to_google_sheets(data_dict):
 
 
 # -------------------------------
-# 8. СОЗДАНИЕ КАРТЫ С ИЗОГЛОССАМИ
+# 8. СОЗДАНИЕ КАРТЫ (обновленное для множественных ответов)
 # -------------------------------
 def create_map(df, selected_question=None, selected_answer=None, show_isoglosses=True):
     center_lat = 57.0
@@ -528,23 +524,49 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
             """
 
             if selected_question and selected_question != "Все вопросы":
-                for q_col in [c for c in df.columns if c.startswith('question_')]:
-                    if row[q_col] == selected_question:
-                        ans_col = q_col.replace('question_', 'answer_')
-                        if ans_col in df.columns:
-                            answer = row[ans_col]
-                            tooltip += f" - {answer}"
-                            popup_text += f"<b>Вопрос:</b> {selected_question}<br>"
-                            popup_text += f"<b>Ответ:</b> {answer}<br>"
-                            color = get_color_for_answer(selected_question, answer)
-                            break
+                # Ищем все ответы на выбранный вопрос
+                answers_list = []
+                for col in df.columns:
+                    if col.startswith('answer_') and pd.notna(row[col]):
+                        parts = col.split('_')
+                        if len(parts) >= 2:
+                            q_num = parts[1][0] if len(parts[1]) > 0 else None
+                            if q_num:
+                                q_col = f'question_{q_num}'
+                                if q_col in df.columns and row[q_col] == selected_question:
+                                    answers_list.append(str(row[col]))
+
+                if answers_list:
+                    answers_str = ", ".join(answers_list)
+                    tooltip += f" - {answers_str}"
+                    popup_text += f"<b>Вопрос:</b> {selected_question}<br>"
+                    popup_text += f"<b>Ответы:</b> {answers_str}<br>"
+                    # Используем первый ответ для цвета маркера
+                    color = get_color_for_answer_variant(selected_question, answers_list[0], idx)
 
             popup_text += "<hr><b>Все диалектные особенности:</b><br>"
-            for q_col in [c for c in df.columns if c.startswith('question_')]:
-                if pd.notna(row[q_col]):
-                    ans_col = q_col.replace('question_', 'answer_')
-                    if ans_col in df.columns and pd.notna(row[ans_col]):
-                        popup_text += f"• {row[q_col]}: <b>{row[ans_col]}</b><br>"
+            # Собираем все вопросы и ответы
+            questions_answers = {}
+            for col in df.columns:
+                if col.startswith('question_') and pd.notna(row[col]):
+                    q_num = col.split('_')[1]
+                    questions_answers[row[col]] = []
+
+            for col in df.columns:
+                if col.startswith('answer_') and pd.notna(row[col]):
+                    parts = col.split('_')
+                    if len(parts) >= 2:
+                        q_num = parts[1][0] if len(parts[1]) > 0 else None
+                        if q_num:
+                            q_col = f'question_{q_num}'
+                            if q_col in df.columns and pd.notna(row[q_col]):
+                                if row[q_col] not in questions_answers:
+                                    questions_answers[row[q_col]] = []
+                                questions_answers[row[q_col]].append(str(row[col]))
+
+            for question, answers in questions_answers.items():
+                if answers:
+                    popup_text += f"• {question}: <b>{', '.join(answers)}</b><br>"
 
             folium.Marker(
                 [row['latitude'], row['longitude']],
@@ -557,13 +579,12 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
 
 
 # -------------------------------
-# 9. ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ
+# 9. ИНТЕРФЕЙС РЕДАКТИРОВАНИЯ (с поддержкой множественных ответов)
 # -------------------------------
 def show_editor_interface(df):
     st.markdown("## ✏️ Режим редактирования данных")
     st.markdown("---")
 
-    # Ссылка на Google Таблицу
     st.markdown("""
     <div style='background-color: #f0f2f6; padding: 15px; border-radius: 10px; margin-bottom: 20px;'>
         <b>📊 Прямой доступ к Google Таблице:</b><br>
@@ -576,7 +597,6 @@ def show_editor_interface(df):
 
     geocoder = LocationGeocoder()
 
-    # Кнопка показа шаблонов (вне формы)
     if st.button("📋 Показать шаблоны вопросов ДАРЯ"):
         st.session_state['show_templates'] = not st.session_state.get('show_templates', False)
 
@@ -584,10 +604,9 @@ def show_editor_interface(df):
         show_question_templates()
         st.markdown("---")
 
-    # ========== ФОРМА ДОБАВЛЕНИЯ НОВОГО ПУНКТА ==========
     with st.form("add_settlement_form"):
         st.markdown("### ➕ Добавление нового населенного пункта")
-        st.info("Заполните информацию. Координаты можно найти автоматически или ввести вручную.")
+        st.info("Заполните информацию. Для каждого вопроса можно указать до 3 вариантов ответов.")
 
         col1, col2 = st.columns(2)
 
@@ -595,13 +614,12 @@ def show_editor_interface(df):
             new_region = st.text_input("Регион *", value="Удмуртская Республика")
             new_district = st.text_input("Район *", placeholder="Завьяловский район")
             new_settlement = st.text_input("Населенный пункт *", placeholder="д. Новая Деревня")
-            new_type = st.selectbox("Тип населенного пункта", ["деревня", "село", "поселок", "город"])
-
+            new_type = st.selectbox("Тип населенного пункта", ["деревня", "село", "поселок", "город", "хутор"])
+            new_altitude = st.number_input("Высота над уровнем моря (м)", value=100, step=10)
 
         with col2:
             st.markdown("#### 🌍 Координаты")
 
-            # Кнопка автоматического поиска координат (submit button)
             search_clicked = st.form_submit_button("🔍 Найти координаты автоматически")
 
             if search_clicked and new_settlement:
@@ -618,25 +636,18 @@ def show_editor_interface(df):
                         if wiki_info:
                             st.info(f"💡 Попробуйте найти координаты на Википедии: [ссылка]({wiki_info['page_url']})")
 
-            # Поля для ручного ввода координат
             st.markdown("**Введите координаты вручную:**")
             st.caption("💡 Поддерживаются оба формата: точка (56.253333) или запятая (56,253333)")
 
             col_lat, col_lon = st.columns(2)
             with col_lat:
                 lat_value = st.session_state.get('auto_lat', st.session_state.get('new_lat', 57.0))
-                # Преобразуем число в строку и заменяем точку на запятую для отображения
                 if isinstance(lat_value, (int, float)):
                     lat_display = str(lat_value).replace('.', ',')
                 else:
                     lat_display = str(lat_value).replace(',', '.')
 
-                lat_input = st.text_input(
-                    "Широта",
-                    value=lat_display,
-                    key="lat_input"
-                )
-                # Обрабатываем ввод - заменяем запятую на точку
+                lat_input = st.text_input("Широта", value=lat_display, key="lat_input")
                 processed_lat = lat_input.replace(',', '.')
                 try:
                     new_lat = float(processed_lat)
@@ -652,11 +663,7 @@ def show_editor_interface(df):
                 else:
                     lon_display = str(lon_value).replace(',', '.')
 
-                lon_input = st.text_input(
-                    "Долгота",
-                    value=lon_display,
-                    key="lon_input"
-                )
+                lon_input = st.text_input("Долгота", value=lon_display, key="lon_input")
                 processed_lon = lon_input.replace(',', '.')
                 try:
                     new_lon = float(processed_lon)
@@ -665,38 +672,53 @@ def show_editor_interface(df):
                     st.error("❌ Неверный формат долготы")
                     new_lon = 53.0
 
-        # Диалектные особенности
         st.markdown("#### 📝 Диалектные особенности")
+        st.info("Для каждого вопроса можно указать до 3 вариантов ответов (например: 'петух', 'кочет')")
 
         default_question = st.session_state.get('template_question', '')
-        num_questions = st.number_input("Количество вопросов", min_value=1, max_value=10, value=3)
+        num_questions = st.number_input("Количество вопросов", min_value=1, max_value=5, value=3)
 
         questions_data = {}
         question_options = list(DARYA_QUESTIONS.values())
 
         for i in range(int(num_questions)):
-            col_q, col_a = st.columns(2)
-            with col_q:
-                q_index = 0
-                if default_question and default_question in question_options:
-                    q_index = question_options.index(default_question) + 1
-                q = st.selectbox(
-                    f"Вопрос {i + 1}",
-                    [""] + question_options,
-                    index=q_index,
-                    key=f"new_q_{i}"
-                )
-            with col_a:
-                a = st.text_input(f"Ответ {i + 1}", key=f"new_a_{i}")
-            if q and a:
-                questions_data[f"question_{i + 1}"] = q
-                questions_data[f"answer_{i + 1}"] = a
+            st.markdown(f"**Вопрос {i + 1}**")
 
-        # Очищаем шаблон после использования
+            q_index = 0
+            if default_question and default_question in question_options:
+                q_index = question_options.index(default_question) + 1
+
+            q = st.selectbox(
+                f"Выберите вопрос {i + 1}",
+                [""] + question_options,
+                index=q_index,
+                key=f"new_q_{i}"
+            )
+
+            if q:
+                questions_data[f"question_{i + 1}"] = q
+
+                # Поля для вариантов ответов (до 3)
+                col_a, col_b, col_c = st.columns(3)
+                with col_a:
+                    a1 = st.text_input(f"Вариант ответа 1", key=f"new_a_{i}_1")
+                with col_b:
+                    a2 = st.text_input(f"Вариант ответа 2 (необязательно)", key=f"new_a_{i}_2")
+                with col_c:
+                    a3 = st.text_input(f"Вариант ответа 3 (необязательно)", key=f"new_a_{i}_3")
+
+                if a1:
+                    questions_data[f"answer_{i + 1}a"] = a1
+                if a2:
+                    questions_data[f"answer_{i + 1}b"] = a2
+                if a3:
+                    questions_data[f"answer_{i + 1}c"] = a3
+
+            st.markdown("---")
+
         if st.session_state.get('template_question'):
             st.session_state['template_question'] = None
 
-        # Кнопка отправки формы
         submitted = st.form_submit_button("✅ Добавить населенный пункт в Google Таблицу", type="primary",
                                           use_container_width=True)
 
@@ -709,6 +731,7 @@ def show_editor_interface(df):
                     "type": new_type,
                     "latitude": new_lat,
                     "longitude": new_lon,
+                    "altitude": new_altitude,
                     **questions_data
                 }
 
@@ -720,7 +743,6 @@ def show_editor_interface(df):
                         st.info(
                             "🔄 Данные появятся на карте через 60 секунд (или нажмите 'Обновить данные' на главной странице)")
 
-                        # Очищаем session state
                         st.session_state['auto_lat'] = 57.0
                         st.session_state['auto_lon'] = 53.0
                         st.session_state['new_lat'] = 57.0
@@ -735,29 +757,19 @@ def show_editor_interface(df):
             else:
                 st.error("❌ Заполните обязательные поля (*)")
 
-    # ========== КОНВЕРТЕР КООРДИНАТ (отдельный блок, не исчезает) ==========
+    # Конвертер координат
     st.markdown("---")
-    st.markdown("## Конвертер координат (градусы → десятичные градусы)")
-    st.info(
-        "Если координаты не найдены автоматически, скопируйте их из Википедии и сконвертируйте здесь. Результат можно скопировать в поля выше.")
+    st.markdown("## 🧮 Конвертер координат (градусы → десятичные градусы)")
+    st.info("Если координаты не найдены автоматически, скопируйте их из Википедии и сконвертируйте здесь.")
 
     conv_col1, conv_col2 = st.columns(2)
 
     with conv_col1:
-        dms_lat_input = st.text_input(
-            "Широта в градусах",
-            placeholder='Пример: 56°51′22″ с.ш. или 56.8563',
-            key="dms_lat_main"
-        )
+        dms_lat_input = st.text_input("Широта в градусах", placeholder='Пример: 56°51′22″ с.ш.', key="dms_lat_main")
 
     with conv_col2:
-        dms_lon_input = st.text_input(
-            "Долгота в градусах",
-            placeholder='Пример: 53°12′41″ в.д. или 53.2115',
-            key="dms_lon_main"
-        )
+        dms_lon_input = st.text_input("Долгота в градусах", placeholder='Пример: 53°12′41″ в.д.', key="dms_lon_main")
 
-    # Кнопка конвертации
     if st.button("🔄 Конвертировать координаты", key="convert_main_btn"):
         conv_lat = convert_dms_to_decimal(dms_lat_input)
         conv_lon = convert_dms_to_decimal(dms_lon_input)
@@ -767,67 +779,22 @@ def show_editor_interface(df):
             st.code(f"Широта: {conv_lat}\nДолгота: {conv_lon}", language="text")
             st.info("💡 Скопируйте эти значения и вставьте в поля 'Широта' и 'Долгота' в форме выше")
 
-            # Кнопка для автоматической вставки
             if st.button("📌 Автоматически вставить в форму", key="auto_insert_btn"):
                 st.session_state['auto_lat'] = conv_lat
                 st.session_state['auto_lon'] = conv_lon
                 st.session_state['new_lat'] = conv_lat
                 st.session_state['new_lon'] = conv_lon
-                st.success("✅ Координаты вставлены в форму! Продолжите заполнение.")
+                st.success("✅ Координаты вставлены в форму!")
                 st.rerun()
         else:
             if conv_lat is None:
-                st.error("❌ Не удалось распознать широту. Пример: 56°51′22″ с.ш. или 56.8563")
+                st.error("❌ Не удалось распознать широту")
             if conv_lon is None:
-                st.error("❌ Не удалось распознать долготу. Пример: 53°12′41″ в.д. или 53.2115")
-
-    # Примеры для быстрой вставки
-    st.markdown("**📋 Примеры для копирования (нажмите на пример - он скопируется в поля выше):**")
-
-    examples_col1, examples_col2, examples_col3 = st.columns(3)
-
-    with examples_col1:
-        if st.button("📍 Ижевск (56°51′ с.ш., 53°12′ в.д.)"):
-            st.session_state['dms_lat_main'] = "56°51′00″ с.ш."
-            st.session_state['dms_lon_main'] = "53°12′00″ в.д."
-            st.rerun()
-
-    with examples_col2:
-        if st.button("📍 Воткинск (57°03′ с.ш., 53°59′ в.д.)"):
-            st.session_state['dms_lat_main'] = "57°03′00″ с.ш."
-            st.session_state['dms_lon_main'] = "53°59′00″ в.д."
-            st.rerun()
-
-    with examples_col3:
-        if st.button("📍 Глазов (58°08′ с.ш., 52°40′ в.д.)"):
-            st.session_state['dms_lat_main'] = "58°08′00″ с.ш."
-            st.session_state['dms_lon_main'] = "52°40′00″ в.д."
-            st.rerun()
-
-    # Дополнительные примеры
-    examples_col4, examples_col5, examples_col6 = st.columns(3)
-
-    with examples_col4:
-        if st.button("📍 Сарапул (56°28′ с.ш., 53°48′ в.д.)"):
-            st.session_state['dms_lat_main'] = "56°28′00″ с.ш."
-            st.session_state['dms_lon_main'] = "53°48′00″ в.д."
-            st.rerun()
-
-    with examples_col5:
-        if st.button("📍 Можга (56°26′ с.ш., 52°13′ в.д.)"):
-            st.session_state['dms_lat_main'] = "56°26′00″ с.ш."
-            st.session_state['dms_lon_main'] = "52°13′00″ в.д."
-            st.rerun()
-
-    with examples_col6:
-        if st.button("📍 Тарасово (Сарапульский р-н)"):
-            st.session_state['dms_lat_main'] = "56°30′00″ с.ш."
-            st.session_state['dms_lon_main'] = "53°45′00″ в.д."
-            st.rerun()
+                st.error("❌ Не удалось распознать долготу")
 
     st.markdown("---")
     st.info(
-        "💡 **Совет:** Вы также можете редактировать данные напрямую в Google Таблице по ссылке вверху страницы. Изменения появятся на карте автоматически.")
+        "💡 **Совет:** Для одного вопроса можно указать несколько вариантов ответов, если в населенном пункте зафиксированы разные диалектные особенности.")
 
 
 # -------------------------------
@@ -841,7 +808,7 @@ if df.empty:
     st.stop()
 
 # -------------------------------
-# 11. БОКОВАЯ ПАНЕЛЬ
+# 11. БОКОВАЯ ПАНЕЛЬ (обновленная)
 # -------------------------------
 with st.sidebar:
     st.markdown("## 🔍 Поиск и фильтры")
@@ -885,13 +852,17 @@ with st.sidebar:
 
     if selected_question_display == "Все вопросы":
         selected_question = "Все вопросы"
+        selected_answer = None
+        available_answers = []
     else:
         selected_question = get_original_question(selected_question_display)
+        available_answers = get_all_answers_for_question_from_df(df, selected_question)
 
-    selected_answer = "Все ответы"
-    if selected_question and selected_question != "Все вопросы":
-        answers = ['Все ответы'] + get_answers_for_question(df, selected_question)
-        selected_answer = st.selectbox("Фильтр по ответу", answers)
+    selected_answer = None
+    if selected_question and selected_question != "Все вопросы" and available_answers:
+        selected_answer = st.selectbox("Фильтр по ответу", ["Все ответы"] + available_answers)
+        if selected_answer == "Все ответы":
+            selected_answer = None
 
     st.markdown("---")
 
@@ -944,12 +915,8 @@ with st.sidebar:
         2. Заполните поля: регион, район, название
         3. Нажмите "🔍 Найти координаты автоматически"
         4. Выберите вопросы из шаблонов ДАРЯ
-        5. Нажмите "✅ Добавить"
-
-        **Если координаты не найдены:**
-        - Используйте конвертер координат внизу страницы
-        - Скопируйте координаты из Википедии
-        - Нажмите "Конвертировать", затем "Автоматически вставить в форму"
+        5. Для каждого вопроса можно указать до 3 вариантов ответов
+        6. Нажмите "✅ Добавить"
 
         ### 🗺️ ИЗОГЛОССЫ (АРЕАЛЫ)
 
@@ -962,7 +929,7 @@ with st.sidebar:
         """)
 
 # -------------------------------
-# 12. ФИЛЬТРАЦИЯ ДАННЫХ
+# 12. ФИЛЬТРАЦИЯ ДАННЫХ (обновленная)
 # -------------------------------
 filtered_df = df.copy()
 
@@ -985,12 +952,8 @@ if selected_unit:
     filtered_df = search_by_linguistic_unit(filtered_df, selected_unit)
     st.sidebar.info(f"📌 Пунктов с '{selected_unit}': {len(filtered_df)}")
 
-if selected_question and selected_question != "Все вопросы":
-    filtered_df = filter_by_question(
-        filtered_df,
-        selected_question,
-        selected_answer if selected_answer != "Все ответы" else None
-    )
+if selected_question and selected_question != "Все вопросы" and selected_answer:
+    filtered_df = filter_by_question_and_answer(filtered_df, selected_question, selected_answer)
 
 # -------------------------------
 # 13. ОСНОВНОЙ ИНТЕРФЕЙС
@@ -1006,7 +969,7 @@ else:
         map_obj = create_map(
             filtered_df,
             selected_question if selected_question != "Все вопросы" else None,
-            selected_answer if selected_answer != "Все ответы" else None,
+            selected_answer,
             st.session_state['show_isoglosses']
         )
 
@@ -1026,9 +989,10 @@ else:
             else:
                 st.markdown(f"**Вопрос:** *{selected_question}*")
             st.markdown("---")
-            answers = get_answers_for_question(df, selected_question)
-            for answer in answers:
-                color = get_color_for_answer(selected_question, answer)
+
+            answers = get_all_answers_for_question_from_df(df, selected_question)
+            for i, answer in enumerate(answers):
+                color = get_color_for_answer_variant(selected_question, answer, i)
                 st.markdown(f"<span style='color: {color}; font-size: 20px;'>●</span> {answer}", unsafe_allow_html=True)
 
             if st.session_state['show_isoglosses']:
@@ -1060,11 +1024,16 @@ if 'settlement_type' in df.columns:
 if 'latitude' in df.columns and 'longitude' in df.columns:
     display_cols.extend(['latitude', 'longitude'])
 
-for i in range(1, 10):
+# Добавляем вопросы и ответы (с группировкой)
+for i in range(1, 6):
     q_col = f'question_{i}'
-    a_col = f'answer_{i}'
-    if q_col in filtered_df.columns and a_col in filtered_df.columns:
-        display_cols.extend([q_col, a_col])
+    if q_col in filtered_df.columns:
+        display_cols.append(q_col)
+        # Добавляем колонки ответов для этого вопроса
+        for variant in ['a', 'b', 'c']:
+            a_col = f'answer_{i}{variant}'
+            if a_col in filtered_df.columns:
+                display_cols.append(a_col)
 
 st.dataframe(
     filtered_df[display_cols],
@@ -1105,7 +1074,7 @@ st.markdown(
         <b>🔍 Поиск по лемме:</b> работает по всем диалектным особенностям<br>
         <b>📝 Номера вопросов:</b> соответствуют программе ДАРЯ<br>
         <b>🌐 Конвертер координат:</b> преобразует градусы из Википедии в десятичные<br>
-        <b>📌 Поддержка форматов:</b> точка (56.253333) или запятая (56,253333)<br>
+        <b>📌 Множественные ответы:</b> для одного вопроса можно указать до 3 вариантов ответов<br>
         <hr>
         © Диалектологическая карта Удмуртии | Проект выполнен в рамках изучения русских говоров
     </div>
