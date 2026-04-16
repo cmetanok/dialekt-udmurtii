@@ -116,8 +116,8 @@ def filter_by_question_and_answer(df, question, answer):
             if a_col in df.columns:
                 for idx, row in df.iterrows():
                     if row[q_col] == question and pd.notna(row[a_col]):
-                        answers = split_answers(row[a_col])
-                        if answer in answers:
+                        answers_list = split_answers(row[a_col])
+                        if answer in answers_list:
                             mask.iloc[idx] = True
     return df[mask]
 
@@ -192,8 +192,8 @@ class IsoglossManager:
                 if a_col in df.columns:
                     for idx, row in df.iterrows():
                         if row[q_col] == question and pd.notna(row[a_col]):
-                            answers = split_answers(row[a_col])
-                            if answer in answers:
+                            answers_list = split_answers(row[a_col])
+                            if answer in answers_list:
                                 if pd.notna(row['latitude']) and pd.notna(row['longitude']):
                                     points.append([row['latitude'], row['longitude']])
         return points
@@ -992,7 +992,7 @@ else:
                 st.markdown("**🗺️ Изоглоссы (ареалы):**")
                 st.markdown("Цветные области показывают границы распространения")
                 st.info(
-                    "ℹ️ **Примечание:** В населенных пунктах, где зафиксировано несколько вариантов ответа (например, 'изба; хата'), они учитываются при построении ареалов для каждого варианта, но сам пункт отображается отдельным маркером")
+                    "ℹ️ **Примечание:** В населенных пунктах, где зафиксировано несколько варианта ответа (например, 'изба; хата'), они учитываются при построении ареалов для каждого варианта, но сам пункт отображается отдельным маркером")
         else:
             st.markdown("""
             **Цвета маркеров по умолчанию:**
