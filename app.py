@@ -73,22 +73,13 @@ def get_answer_for_question(row, question):
 
 
 def get_unique_questions(df):
-    """Получает список всех вопросов из таблицы"""
+    """Получает список всех вопросов из таблицы (без номеров)"""
     questions = set()
     for col in df.columns:
         if col.startswith('question_'):
             for q in df[col].dropna().unique():
-                if q in QUESTION_TO_NUMBER:
-                    questions.add(f"[№{QUESTION_TO_NUMBER[q]}] {q}")
-                else:
-                    questions.add(q)
+                questions.add(q)
     return sorted(list(questions))
-
-
-def get_original_question(display_question):
-    if display_question and display_question.startswith("[№"):
-        return display_question.split("] ", 1)[1]
-    return display_question
 
 
 def get_available_answers_for_question(df, question):
@@ -161,7 +152,6 @@ def get_all_linguistic_units(df):
 # -------------------------------
 def get_color_for_answer(answer, is_multiple=False):
     """Определяет цвет для варианта ответа"""
-    # Если это пункт с множественными ответами, возвращаем специальный цвет
     if is_multiple:
         return 'purple'
 
@@ -223,11 +213,9 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
     """Создает интерактивную карту"""
     m = folium.Map(location=[57.0, 53.0], zoom_start=7, tiles='OpenStreetMap')
 
-    # Добавляем изоглоссы
     if show_isoglosses and selected_question and selected_question != "Все вопросы":
         m = IsoglossManager().add_isoglosses_to_map(m, df, selected_question)
 
-    # Добавляем маркеры
     for _, row in df.iterrows():
         if pd.isna(row['latitude']) or pd.isna(row['longitude']):
             continue
@@ -252,25 +240,21 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
         if selected_question and selected_question != "Все вопросы":
             answers = get_answer_for_question(row, selected_question)
             if not answers:
-                continue  # Пропускаем пункты без ответа на выбранный вопрос
+                continue
 
             answers_str = f" — {', '.join(answers)}"
             popup_html += f"<b>Вопрос:</b> {selected_question}<br>"
             popup_html += f"<b>Ответы:</b> {', '.join(answers)}<br>"
 
-            # Проверяем, есть ли несколько ответов
             is_multiple = len(answers) > 1
 
-            # Выбор цвета
             if is_multiple:
-                # Если несколько ответов - используем специальный цвет
                 color = 'purple'
             elif selected_answer and selected_answer in answers:
                 color = get_color_for_answer(selected_answer, is_multiple=False)
             else:
                 color = get_color_for_answer(answers[0], is_multiple=False)
 
-        # Добавляем все диалектные особенности
         popup_html += "<hr><b>Все диалектные особенности:</b><br>"
         for q_col in df.columns:
             if q_col.startswith('question_') and pd.notna(row[q_col]):
@@ -282,7 +266,6 @@ def create_map(df, selected_question=None, selected_answer=None, show_isoglosses
                     else:
                         popup_html += f"• {q_val}: <b>{', '.join(ans_list)}</b><br>"
 
-        # Добавляем иконку в тултип для множественных ответов
         tooltip_text = f"{settlement}{answers_str}"
         if is_multiple:
             tooltip_text += " 🔸 (несколько вариантов)"
@@ -743,12 +726,10 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Поиск по населенному пункту
     search_settlement = st.text_input("🔎 Найти населенный пункт", placeholder="например: Русская Лоза")
 
     st.markdown("---")
 
-    # Поиск по диалектным особенностям
     st.markdown("## 🔬 Поиск по диалектным особенностям")
 
     search_linguistic = st.text_input(
@@ -766,40 +747,29 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Анализ по вопросам
     st.markdown("## 📋 Анализ по вопросам")
-    questions_display = get_unique_questions(df)
-    selected_question_display = st.selectbox("Выберите вопрос из программы ДАРЯ", ["Все вопросы"] + questions_display)
-
-    if selected_question_display == "Все вопросы":
-        selected_question = "Все вопросы"
-        selected_answer = None
-        available_answers = []
-    else:
-        selected_question = get_original_question(selected_question_display)
-        available_answers = get_available_answers_for_question(df, selected_question)
+    questions_list = get_unique_questions(df)
+    selected_question = st.selectbox("Выберите вопрос из программы ДАРЯ", ["Все вопросы"] + questions_list)
 
     selected_answer = None
-    if selected_question and selected_question != "Все вопросы" and available_answers:
+    if selected_question and selected_question != "Все вопросы":
+        available_answers = get_available_answers_for_question(df, selected_question)
         selected_answer = st.selectbox("Фильтр по ответу", ["Все ответы"] + available_answers)
         if selected_answer == "Все ответы":
             selected_answer = None
 
     st.markdown("---")
 
-    # Изоглоссы
     st.session_state['show_isoglosses'] = st.checkbox("🗺️ Показывать изоглоссы (ареалы распространения)",
                                                       value=st.session_state['show_isoglosses'])
 
     st.markdown("---")
 
-    # Фильтр по региону
     regions = ['Все регионы'] + sorted(df['region'].unique().tolist())
     selected_region = st.selectbox("📍 Регион", regions)
 
     st.markdown("---")
 
-    # Статистика
     st.markdown("## 📊 Статистика")
     stat1, stat2 = st.columns(2)
     with stat1:
@@ -811,7 +781,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Инструкция
     with st.expander("📖 ПОЛНАЯ ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ", expanded=False):
         st.markdown("""
         ### 🗺️ РАБОТА С КАРТОЙ
@@ -821,7 +790,7 @@ with st.sidebar:
         ### 🔍 ПОИСК И ФИЛЬТРАЦИЯ
         - **Поиск по названию** - находит населенный пункт
         - **Поиск по особенностям** - ищет по любым диалектным признакам
-        - **Анализ по вопросам** - выбирайте вопрос ДАРЯ и смотрите распределение
+        - **Анализ по вопросам** - выбирайте вопрос и смотрите распределение
 
         ### 📌 МНОЖЕСТВЕННЫЕ ОТВЕТЫ
         - В одном пункте может быть несколько ответов (через ;)
@@ -840,17 +809,14 @@ with st.sidebar:
 # -------------------------------
 filtered_df = df.copy()
 
-# Фильтр по региону
 if selected_region != "Все регионы" and 'region' in df.columns:
     filtered_df = filtered_df[filtered_df['region'] == selected_region]
 
-# Фильтр по населенному пункту
 if search_settlement and 'settlement' in df.columns:
     filtered_df = filtered_df[
         filtered_df['settlement'].str.contains(search_settlement, case=False, na=False)
     ]
 
-# Фильтр по лингвистическим единицам
 if search_linguistic:
     filtered_df = filter_df_by_linguistic_unit(filtered_df, search_linguistic)
     if len(filtered_df) > 0:
@@ -862,7 +828,6 @@ if selected_unit:
     filtered_df = filter_df_by_linguistic_unit(filtered_df, selected_unit)
     st.sidebar.info(f"📌 Пунктов с '{selected_unit}': {len(filtered_df)}")
 
-# Фильтр по вопросу и ответу
 if selected_question and selected_question != "Все вопросы":
     filtered_df = filter_df_by_question_and_answer(filtered_df, selected_question, selected_answer)
     if len(filtered_df) == 0:
@@ -896,11 +861,7 @@ else:
         st.markdown("## 📋 Легенда")
 
         if selected_question and selected_question != "Все вопросы":
-            q_number = QUESTION_TO_NUMBER.get(selected_question, "")
-            if q_number:
-                st.markdown(f"**Вопрос №{q_number}:** *{selected_question}*")
-            else:
-                st.markdown(f"**Вопрос:** *{selected_question}*")
+            st.markdown(f"**Вопрос:** *{selected_question}*")
             st.markdown("---")
 
             answers = get_available_answers_for_question(df, selected_question)
@@ -908,7 +869,6 @@ else:
                 color = get_color_for_answer(answer, is_multiple=False)
                 st.markdown(f"<span style='color: {color}; font-size: 20px;'>●</span> {answer}", unsafe_allow_html=True)
 
-            # Добавляем пояснение для множественных ответов
             st.markdown("---")
             st.markdown(
                 f"<span style='color: purple; font-size: 20px;'>●</span> **Несколько вариантов ответа** (зафиксировано 2+ варианта)",
