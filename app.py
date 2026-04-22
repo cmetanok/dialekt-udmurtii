@@ -783,6 +783,8 @@ with st.sidebar:
 
     with st.expander("📖 ПОЛНАЯ ИНСТРУКЦИЯ ПОЛЬЗОВАТЕЛЯ", expanded=False):
         st.markdown("""
+        ### Ссылки
+    - [GitHub репозиторий](https://github.com/cmetanok/dialekt-udmurtii)
         ### 🗺️ РАБОТА С КАРТОЙ
         - **Кликните на маркер** - информация о населенном пункте
         - **Приближайте/отдаляйте** - колесико мыши или кнопки +/-
